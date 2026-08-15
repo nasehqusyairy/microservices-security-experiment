@@ -1,0 +1,31 @@
+version: "3.8"
+
+# VULNERABLE configuration - for Phase 1 attack demonstrations
+# Run: docker-compose -f docker-compose.vulnerable.yml up
+
+services:
+  auth-service:
+    build: ./auth-service
+    command: node server-vulnerable.js
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    networks:
+      - microservices-net
+
+  order-service:
+    build: ./order-service
+    command: node server-vulnerable.js
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+    networks:
+      - microservices-net
+    depends_on:
+      - auth-service
+
+networks:
+  microservices-net:
+    driver: bridge

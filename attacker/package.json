@@ -1,0 +1,15 @@
+{
+  "name": "attacker",
+  "version": "1.0.0",
+  "description": "Attack scripts for demonstrating microservice vulnerabilities",
+  "scripts": {
+    "attack1": "node attack1-token-forgery.js",
+    "attack2": "node attack2-brute-force.js",
+    "attack3": "node attack3-replay.js",
+    "attack4": "node attack4-weak-validation.js",
+    "all": "node run-all-attacks.js"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.0"
+  }
+}

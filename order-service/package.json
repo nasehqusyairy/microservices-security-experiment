@@ -1,0 +1,14 @@
+{
+  "name": "order-service",
+  "version": "1.0.0",
+  "description": "Order Service - protected backend with JWT validation",
+  "main": "server-secure.js",
+  "scripts": {
+    "start": "node server-secure.js",
+    "start:vulnerable": "node server-vulnerable.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0"
+  }
+}

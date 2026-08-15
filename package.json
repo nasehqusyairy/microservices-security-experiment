@@ -1,0 +1,20 @@
+{
+  "name": "microservices-security-research",
+  "version": "1.0.0",
+  "description": "Securing Inter-Service Communication in Containerised Microservice Architectures",
+  "scripts": {
+    "demo": "node run-local-demo.js",
+    "install:all": "cd auth-service && npm install && cd ../order-service && npm install && cd ../gateway && npm install && cd ../attacker && npm install",
+    "docker:vulnerable": "docker-compose -f docker-compose.vulnerable.yml up --build",
+    "docker:secure": "docker-compose -f docker-compose.secure.yml up --build",
+    "certs": "bash certs/generate-certs.sh",
+    "attack:all": "node attacker/run-all-attacks.js",
+    "attack:1": "node attacker/attack1-token-forgery.js",
+    "attack:2": "node attacker/attack2-brute-force.js",
+    "attack:3": "node attacker/attack3-replay.js",
+    "attack:4": "node attacker/attack4-weak-validation.js"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.0"
+  }
+}
