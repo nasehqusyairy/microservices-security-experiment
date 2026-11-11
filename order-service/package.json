@@ -5,10 +5,12 @@
   "main": "server-secure.js",
   "scripts": {
     "start": "node server-secure.js",
-    "start:vulnerable": "node server-vulnerable.js"
+    "start:vulnerable": "node server-vulnerable.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.0"
+    "jsonwebtoken": "^9.0.0",
+    "redis": "^4.7.0"
   }
 }

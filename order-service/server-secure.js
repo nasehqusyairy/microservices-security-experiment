@@ -15,10 +15,16 @@
  *     the editor flagged - the service now refuses to start instead.
  */
 const express = require("express");
-const jwt = require("jsonwebtoken");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const { createClient } = require("redis");
+const {
+  InMemoryReplayStore,
+  RedisReplayStore,
+  RedisTtlReplayStore
+} = require("./replay-stores");
+const { createReplayMiddleware } = require("./replay-auth");
 
 const app = express();
 app.use(express.json());
@@ -29,18 +35,42 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-// Token tracking for replay protection.
-// LIMITATION (documented, not hidden): this is an in-memory Set. It is
-// reset on process restart and is not shared across multiple replicas of
-// this service. It is adequate for demonstrating the replay-protection
-// mechanism in this single-instance testbed, but it is NOT a production
-// replay-protection design - see manuscript Section 5.5 / Appendix note.
-const usedTokens = new Set();
+const experimentMode = process.env.EXPERIMENT_MODE === "true";
+const replayMethod = process.env.REPLAY_METHOD || "in-memory";
+const replayPrefix = process.env.REPLAY_KEY_PREFIX || "microservices:replay";
+let replayStore;
+let redisClient;
 
-setInterval(() => {
-  usedTokens.clear();
-  console.log("[INFO] Token store cleared");
-}, 5 * 60 * 1000);
+if (replayMethod === "in-memory") {
+  replayStore = new InMemoryReplayStore();
+  if (!experimentMode) {
+    setInterval(() => {
+      replayStore.clear();
+      console.log("[INFO] Token store cleared");
+    }, 5 * 60 * 1000);
+  }
+} else if (replayMethod === "redis" || replayMethod === "redis-ttl") {
+  redisClient = createClient({
+    url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
+    socket: {
+      connectTimeout: 2000,
+      reconnectStrategy: () => false
+    }
+  });
+  redisClient.on("error", () => {
+    console.error(JSON.stringify({
+      event: "redis_connection_error",
+      category: "replay_store_unavailable",
+      message: "Redis connection error"
+    }));
+  });
+  replayStore = replayMethod === "redis"
+    ? new RedisReplayStore(redisClient, replayPrefix)
+    : new RedisTtlReplayStore(redisClient, replayPrefix);
+} else {
+  console.error(`[FATAL] Unsupported REPLAY_METHOD: ${replayMethod}`);
+  process.exit(1);
+}
 
 // Allow-list of client certificate Common Names permitted to call this
 // service. In this testbed only the gateway calls the Order Service directly.
@@ -60,37 +90,12 @@ function verifyClientCertificate(req, res, next) {
   next();
 }
 
-function verifyToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  if (!authHeader) return res.status(401).send("No token provided");
+const verifyToken = createReplayMiddleware({ jwtSecret: JWT_SECRET, replayStore, experimentMode });
 
-  const token = authHeader.split(" ")[1];
-  if (!token) return res.status(401).send("Malformed authorization header");
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
-      issuer: "auth-service",
-      audience: "order-service"
-    });
-
-    if (decoded.service !== "order_service") {
-      return res.status(403).send("Forbidden: invalid service identity");
-    }
-
-    if (usedTokens.has(token)) {
-      return res.status(403).send("Token already used - replay attack detected");
-    }
-
-    usedTokens.add(token);
-    req.decoded = decoded;
-    next();
-  } catch (err) {
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).send("Token expired");
-    }
-    return res.status(401).send("Invalid token");
-  }
-}
+app.use((req, res, next) => {
+  if (experimentMode) res.set("X-Experiment-Replica", process.env.REPLICA_ID || "order-1");
+  next();
+});
 
 app.get("/orders", verifyClientCertificate, verifyToken, (req, res) => {
   res.json({
@@ -105,9 +110,13 @@ app.get("/orders", verifyClientCertificate, verifyToken, (req, res) => {
   });
 });
 
-app.get("/health", (req, res) => res.send({ status: "order-service running (SECURE)" }));
+app.get("/health", (req, res) => res.send({
+  status: "order-service running (SECURE)",
+  replica_id: process.env.REPLICA_ID || "order-1",
+  replay_method: replayMethod
+}));
 
-const certDir = path.join(__dirname, "../certs");
+const certDir = process.env.CERTS_DIR || path.join(__dirname, "../certs");
 const orderKey = path.join(certDir, "order.key");
 const orderPem = path.join(certDir, "order.pem");
 const caPem = path.join(certDir, "ca.pem");
@@ -117,12 +126,32 @@ if (!(fs.existsSync(orderKey) && fs.existsSync(orderPem) && fs.existsSync(caPem)
   process.exit(1);
 }
 
-https.createServer({
-  key: fs.readFileSync(orderKey),
-  cert: fs.readFileSync(orderPem),
-  ca: fs.readFileSync(caPem),
-  requestCert: true,
-  rejectUnauthorized: true
-}, app).listen(4000, () => {
-  console.log("[SECURE] Order Service running on port 4000 with mandatory mTLS");
+async function start() {
+  if (redisClient) await redisClient.connect();
+
+  const server = https.createServer({
+    key: fs.readFileSync(orderKey),
+    cert: fs.readFileSync(orderPem),
+    ca: fs.readFileSync(caPem),
+    requestCert: true,
+    rejectUnauthorized: true
+  }, app);
+
+  const port = Number(process.env.PORT || 4000);
+  const host = experimentMode ? "127.0.0.1" : "0.0.0.0";
+  server.listen(port, host, () => {
+    console.log(`[SECURE] Order Service ${process.env.REPLICA_ID || "order-1"} running on port ${port} with mandatory mTLS`);
+  });
+
+  const shutdown = async () => {
+    server.close();
+    if (redisClient && redisClient.isOpen) await redisClient.quit();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+}
+
+start().catch((error) => {
+  console.error(`[FATAL] Order Service startup failed: ${error.message}`);
+  process.exit(1);
 });

@@ -207,3 +207,181 @@ ATTACK 4: Manipulated claims rejected → HTTP 403 Forbidden (SECURE)
 - Docker Documentation
 - express-rate-limit Documentation
 - OpenSSL Documentation
+
+---
+
+## Replay Protection Experiment
+
+`run-local-demo-2.js` is a separate, data-oriented experiment runner. It leaves
+the original vulnerable/secure demonstration in `run-local-demo.js` unchanged.
+The experimental path is **Auth Service → Client/Runner → API Gateway → Order
+Service**; the gateway verifies JWTs and calls the Order Service over mTLS.
+
+The experiment uses one-time-use service tokens: a valid JWT `jti` can authorize
+the protected `/orders` operation once. Each token has a cryptographically
+random `jti`, `sub`, `iat`, `exp`, issuer, and audience. This is an explicit
+measurement assumption, not a recommendation to reject normal access tokens
+reused for separate legitimate operations in a production API.
+
+### Replay stores
+
+The secure Order Service selects one shared `consume(jti, expiresAt)` interface
+using `REPLAY_METHOD`:
+
+| Method | Behavior |
+|---|---|
+| `in-memory` | Process-local Set; atomically accepts a `jti` once, but replicas and restarts have independent/empty state. |
+| `redis` | Atomic Redis `SET NX`; shared across replicas and retained without expiry for the experiment. |
+| `redis-ttl` | Atomic Redis `SET NX PX`; entry TTL is the JWT's remaining lifetime. |
+
+JWT signature, issuer, audience, service identity, expiry, and `jti` validation
+are the same for all methods and happen before replay-store lookup. Redis
+failures reject requests with HTTP 503 (fail closed) and are recorded as
+`store_error`, not as detected replays. Redis keys contain a SHA-256 digest of
+the `jti`. The experimental token-provisioning route is available only when
+`EXPERIMENT_MODE=true`, from loopback, and with a per-run key; ordinary
+`/service-token` behavior and rate limiting remain intact.
+
+### Scenario matrix
+
+| Scenario | Method | Order replicas |
+|---|---|---:|
+| S1 | in-memory | 1 |
+| S2 | redis | 1 |
+| S3 | redis-ttl | 1 |
+| S4 | in-memory | 2 |
+| S5 | redis | 2 |
+| S6 | redis-ttl | 2 |
+
+Each repetition starts clean Order Service processes and uses a unique Redis
+key prefix. The two-replica run routes requests deterministically to
+`order-1`/`order-2` through an experiment-only gateway selector. It measures
+same-replica replays, cross-replica replays, simultaneous duplicate requests,
+and replay state after restarting `order-1`. Restart checks use a newly issued
+token and verify it remains unexpired before testing.
+
+### Run the experiment
+
+Install dependencies and generate the local mTLS certificates:
+
+```bash
+npm run install:all
+npm run certs
+```
+
+Start Redis in a separate terminal for all six scenarios:
+
+```bash
+docker run --rm --name mse-redis -p 6379:6379 redis:7-alpine
+```
+
+Then run the quick experiment (1 repetition, 10 legitimate requests, 10 replay
+attempts, concurrency levels 1 and 5):
+
+```bash
+node run-local-demo-2.js --mode quick
+```
+
+Run the larger default experiment (3 repetitions, 100 requests/attempts, and
+concurrency 1, 10, and 50):
+
+```bash
+node run-local-demo-2.js --mode full
+```
+
+Configuration can be overridden with CLI flags or environment variables:
+
+```bash
+node run-local-demo-2.js --mode quick --repetitions 2 --requests 20 \
+  --replays 25 --concurrency 1,10,50 --output ./my-results
+REDIS_URL=redis://127.0.0.1:6379 node run-local-demo-2.js --mode full
+```
+
+Supported environment variables include `EXPERIMENT_REPETITIONS`,
+`EXPERIMENT_REQUESTS`, `EXPERIMENT_REPLAYS`, `EXPERIMENT_CONCURRENCY`,
+`EXPERIMENT_OUTPUT_DIR`, `EXPERIMENT_TOKEN_TTL_SECONDS`, `REDIS_URL`, and
+`CERTS_DIR`. Missing/invalid certificates or service failures are recorded in
+scenario results. When Redis is unavailable, its scenarios are explicitly
+marked `failed`; in-memory scenarios still run.
+
+Every invocation creates a unique output folder and writes observations as it
+runs:
+
+```text
+results/replay-<UTC timestamp>-<id>/
+├── metadata.json
+├── scenarios.csv
+├── requests.csv
+├── summary.csv
+└── events.jsonl
+```
+
+`requests.csv` is the source of truth: one row per measured first use, replay,
+concurrent replay, and performance request. It includes a one-way `jti_hash`,
+chosen replica, UTC timestamps, end-to-end latency, HTTP/store outcomes, and
+internal store latency when available. It never writes JWTs or secrets.
+`scenarios.csv` records completed/failed scenario status and counts.
+`summary.csv` groups security and performance metrics by scenario and
+repetition. Percentiles use linear interpolation; standard deviation uses the
+sample formula. Throughput is completed performance requests divided by the
+request-observation time span, excluding token provisioning and warm-up.
+CPU/process-memory usage is not sampled and those summary fields remain empty.
+
+### Analyze with pandas/Jupyter
+
+Install the analysis dependencies and run the notebook-ready analysis script:
+
+```bash
+python3 -m pip install pandas matplotlib
+python3 analysis/analyze_replay_protection.py results/<experiment-directory>
+```
+
+The script loads and validates the metadata and generated CSV schemas, displays
+dimensions/missing values, recomputes security and latency metrics from raw
+requests, and saves derived tables and plots in
+`results/<experiment-directory>/analysis/`. To use it interactively in
+Jupyter:
+
+```bash
+python3 -m pip install jupyter pandas matplotlib
+jupyter lab
+```
+
+In JupyterLab's file browser open
+`analysis/replay_protection_analysis.ipynb`, set the experiment directory in
+its first code cell, then run the notebook cells. Alternatively, run the
+script from a terminal or a notebook cell:
+
+```python
+%run analysis/analyze_replay_protection.py results/<experiment-directory>
+
+import pandas as pd
+requests = pd.read_csv("results/<experiment-directory>/requests.csv")
+summary = pd.read_csv("results/<experiment-directory>/summary.csv")
+```
+
+### Metrics and reproducibility notes
+
+- Replay detection rate = rejected replay attempts / replay attempts, including
+  same-replica, cross-replica, restart, and duplicate concurrent attempts
+  (excluding the one expected initial acceptance in each concurrent batch).
+- Legitimate acceptance rate = accepted legitimate first-use/performance
+  requests / legitimate requests.
+- False acceptance/rejection rates use replay attempts / legitimate requests,
+  respectively, as their denominators.
+- Latency is runner-observed end-to-end HTTP latency; store latency is separately
+  measured inside Order Service around `consume()`.
+- Throughput is calculated per recorded performance window; setup and
+  warm-up requests are not observations.
+- All methods use the same local machine, JWT rules, route, payload, and
+  configured request counts. The local controlled testbed is not a production
+  benchmark. Results depend on host load, Redis configuration, network stack,
+  and process scheduling. The in-memory method intentionally loses its state
+  on restart; Redis without TTL intentionally leaves the unique experiment
+  keys in Redis after a run.
+
+Run the replay-store and logging tests with:
+
+```bash
+npm test --prefix order-service
+```

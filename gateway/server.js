@@ -33,7 +33,7 @@ if (!JWT_SECRET) {
 // mTLS client identity: the gateway authenticates itself to the Order
 // Service using a client certificate signed by the shared CA.
 // ---------------------------------------------------------------------------
-const certDir = path.join(__dirname, "../certs");
+const certDir = process.env.CERTS_DIR || path.join(__dirname, "../certs");
 const clientKeyPath = path.join(certDir, "client.key");
 const clientCertPath = path.join(certDir, "client.pem");
 const caPath = path.join(certDir, "ca.pem");
@@ -61,7 +61,26 @@ const mtlsAgent = new https.Agent({
   servername: "order-service"
 });
 
-const ORDER_SERVICE_TARGET = "https://order-service:4000";
+const experimentMode = process.env.EXPERIMENT_MODE === "true";
+let orderServiceTargets = { "order-1": "https://order-service:4000" };
+if (experimentMode && process.env.ORDER_SERVICE_TARGETS) {
+  try {
+    orderServiceTargets = JSON.parse(process.env.ORDER_SERVICE_TARGETS);
+  } catch (error) {
+    console.error("[FATAL] ORDER_SERVICE_TARGETS must be a JSON object.");
+    process.exit(1);
+  }
+  if (
+    !orderServiceTargets ||
+    typeof orderServiceTargets !== "object" ||
+    Array.isArray(orderServiceTargets) ||
+    Object.values(orderServiceTargets).some((target) => typeof target !== "string" || !target.startsWith("https://"))
+  ) {
+    console.error("[FATAL] Experiment order-service targets must be HTTPS URLs.");
+    process.exit(1);
+  }
+}
+const defaultReplicaId = Object.keys(orderServiceTargets)[0];
 
 // ---------------------------------------------------------------------------
 // JWT verification middleware (application-layer authorization, separate
@@ -95,11 +114,22 @@ function verifyToken(req, res, next) {
 // Route: proxy /orders to order-service over mTLS after JWT verification
 app.use(
   "/orders",
+  (req, res, next) => {
+    const requestedReplica = experimentMode
+      ? req.get("x-experiment-replica") || defaultReplicaId
+      : defaultReplicaId;
+    if (!Object.hasOwn(orderServiceTargets, requestedReplica)) {
+      return res.status(400).send("Unknown experiment replica");
+    }
+    req.experimentReplica = requestedReplica;
+    next();
+  },
   verifyToken,
   createProxyMiddleware({
-    target: ORDER_SERVICE_TARGET,
+    target: orderServiceTargets[defaultReplicaId],
     changeOrigin: true,
     agent: mtlsAgent,
+    router: (req) => orderServiceTargets[req.experimentReplica],
     on: {
       error: (err, req, res) => {
         console.error("Proxy error (mTLS handshake or upstream failure):", err.message);
@@ -123,4 +153,6 @@ app.get("/health", (req, res) => {
   res.send({ status: "gateway running", mtls_to_order_service: mtlsEnabled, timestamp: new Date().toISOString() });
 });
 
-app.listen(5000, () => console.log("[SECURE] API Gateway running on port 5000 (mTLS to order-service enabled)"));
+const port = Number(process.env.PORT || 5000);
+const host = experimentMode ? "127.0.0.1" : "0.0.0.0";
+app.listen(port, host, () => console.log(`[SECURE] API Gateway running on port ${port} (mTLS to order-service enabled)`));

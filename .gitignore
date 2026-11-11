@@ -19,6 +19,9 @@ npm-debug.log*
 # Build and test output
 coverage/
 dist/
+results/
+__pycache__/
+*.py[cod]
 
 # Operating system and editor files
 .DS_Store
