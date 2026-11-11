@@ -19,7 +19,7 @@ npm-debug.log*
 # Build and test output
 coverage/
 dist/
-results/
+# results/
 __pycache__/
 *.py[cod]
 

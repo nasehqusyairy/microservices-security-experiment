@@ -1,0 +1,120 @@
+{
+  "experiment_id": "replay-2026-11-11T07-38-20-847Z-cdda86af",
+  "start_time": "2026-11-11T07:38:20.848134378Z",
+  "end_time": "2026-11-11T07:39:14.497974180Z",
+  "repository_commit": "ea1e38c20a01a600b67344aca0ea141f5f28a1c7",
+  "node_version": "v24.15.0",
+  "operating_system": "Linux 7.0.0-43-generic (x64)",
+  "cpu": [
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4199
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4201
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4200
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4199
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4202
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4200
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4199
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 4200
+    }
+  ],
+  "total_memory_bytes": 16055599104,
+  "redis_version": "7.4.12",
+  "redis_available": true,
+  "configuration": {
+    "mode": "full",
+    "repetitions": 3,
+    "legitimate_requests_per_repetition": 100,
+    "replay_attempts_per_repetition": 100,
+    "concurrency_levels": [
+      1,
+      10,
+      50
+    ],
+    "token_lifetime_seconds": 300,
+    "redis_url": "redis://127.0.0.1:6379",
+    "output_directory": "/home/nasyikhqusyairy/Projects/repositories/mse/results/replay-2026-11-11T07-38-20-847Z-cdda86af"
+  },
+  "methods": {
+    "in-memory": "Process-local Set keyed by SHA-256(jti); state is lost on service restart.",
+    "redis": "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
+    "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime."
+  },
+  "token_semantics": "One-time-use service token: one jti can authorize at most one protected operation.",
+  "jwt_configuration": {
+    "issuer": "auth-service",
+    "audience": "order-service",
+    "subject": "order_service",
+    "algorithm": "HS256",
+    "token_lifetime_seconds": 300,
+    "secret_recorded": false
+  },
+  "scenarios": [
+    {
+      "scenario_id": "S1",
+      "method": "in-memory",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S2",
+      "method": "redis",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S3",
+      "method": "redis-ttl",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S4",
+      "method": "in-memory",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S5",
+      "method": "redis",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S6",
+      "method": "redis-ttl",
+      "replica_count": 2
+    }
+  ],
+  "request_counts": {
+    "planned_measured_requests": 10170,
+    "completed_measured_requests": 10170
+  },
+  "request_schema_version": 1,
+  "measurement": {
+    "latency": "Runner-observed end-to-end HTTP latency using process.hrtime.bigint(); excludes token setup and health checks.",
+    "throughput": "Completed performance-phase requests divided by wall-clock span of recorded performance request start/end timestamps.",
+    "percentiles": "Linear interpolation between adjacent sorted observations; standard deviation uses sample formula (n-1).",
+    "store_latency": "Order Service's internal replay-store consume() duration, returned in an experiment-only response header.",
+    "resource_metrics": "CPU and process memory utilization were not sampled; summary columns remain empty."
+  },
+  "warnings": [],
+  "errors": [],
+  "interrupted": false
+}
