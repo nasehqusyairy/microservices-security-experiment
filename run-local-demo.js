@@ -10,6 +10,9 @@
 
 const { spawn, execSync } = require("child_process");
 const http = require("http");
+const https = require("https");
+const fs = require("fs");
+const tls = require("tls");
 const path = require("path");
 
 const ROOT = __dirname;
@@ -20,7 +23,8 @@ function wait(ms) {
 
 function makeRequest(options, body = null) {
   return new Promise((resolve) => {
-    const req = http.request(options, (res) => {
+    const transport = options.protocol === "https:" ? https : http;
+    const req = transport.request(options, (res) => {
       let data = "";
       res.on("data", (c) => (data += c));
       res.on("end", () => resolve({ status: res.statusCode, body: data }));
@@ -40,9 +44,15 @@ function installDeps(serviceDir) {
   }
 }
 
-async function waitForService(port, maxAttempts = 20) {
+async function waitForService(port, requestOptions = {}, maxAttempts = 20) {
   for (let i = 0; i < maxAttempts; i++) {
-    const r = await makeRequest({ hostname: "localhost", port, path: "/health", method: "GET" });
+    const r = await makeRequest({
+      ...requestOptions,
+      hostname: "localhost",
+      port,
+      path: "/health",
+      method: "GET"
+    });
     if (r.status === 200) return true;
     await wait(500);
   }
@@ -91,6 +101,51 @@ async function runPhase(phaseName, authScript, orderScript, envVars = {}) {
   processes = [];
   await wait(500);
 
+  const isSecure = phaseName.includes("SECURE");
+  const certDir = path.join(ROOT, "certs");
+  const requiredCerts = ["ca.pem", "client.pem", "client.key", "order.pem", "order.key"];
+  const missingCerts = requiredCerts.filter((file) => !fs.existsSync(path.join(certDir, file)));
+
+  if (isSecure && missingCerts.length > 0) {
+    console.log(
+      `[ERROR] SECURE phase requires mTLS certificates. Missing: ${missingCerts.join(", ")}. ` +
+      "Run 'npm run certs' first."
+    );
+    return false;
+  }
+
+  if (isSecure) {
+    const certificatePairs = [
+      { name: "client", cert: "client.pem", key: "client.key" },
+      { name: "order service", cert: "order.pem", key: "order.key" }
+    ];
+
+    for (const pair of certificatePairs) {
+      try {
+        tls.createSecureContext({
+          cert: fs.readFileSync(path.join(certDir, pair.cert)),
+          key: fs.readFileSync(path.join(certDir, pair.key))
+        });
+      } catch (error) {
+        console.log(
+          `[ERROR] Invalid ${pair.name} mTLS certificate/key: ${error.message}. ` +
+          "Regenerate the certificates with 'npm run certs'."
+        );
+        return false;
+      }
+    }
+  }
+
+  const orderRequestOptions = isSecure
+    ? {
+        protocol: "https:",
+        ca: fs.readFileSync(path.join(certDir, "ca.pem")),
+        cert: fs.readFileSync(path.join(certDir, "client.pem")),
+        key: fs.readFileSync(path.join(certDir, "client.key")),
+        servername: "order-service"
+      }
+    : {};
+
   // Start services
   console.log("[*] Starting services...");
   startProcess("auth", path.join(ROOT, "auth-service"), authScript, envVars);
@@ -100,22 +155,22 @@ async function runPhase(phaseName, authScript, orderScript, envVars = {}) {
 
   // Wait for services
   const authOk = await waitForService(3000);
-  const orderOk = await waitForService(4000);
+  const orderOk = await waitForService(4000, orderRequestOptions);
 
   if (!authOk || !orderOk) {
-    console.log("[ERROR] Services failed to start. Run 'npm install' in each service directory.");
-    return;
+    console.log("[ERROR] Services failed to start. Check the service errors above.");
+    return false;
   }
 
   console.log("[+] Services ready\n");
 
   const SECRET = envVars.JWT_SECRET || "SUPER_SECRET";
-  const isSecure = phaseName.includes("SECURE");
 
   // ── Test 1: Token Forgery ────────────────────────────────────────────────
   console.log("┌─ ATTACK 1: TOKEN FORGERY");
   const forgedToken = jwt.sign({ typ: "service", service: "attacker" }, "SUPER_SECRET");
   const r1 = await makeRequest({
+    ...orderRequestOptions,
     hostname: "localhost", port: 4000, path: "/orders", method: "GET",
     headers: { Authorization: `Bearer ${forgedToken}` }
   });
@@ -185,6 +240,7 @@ async function runPhase(phaseName, authScript, orderScript, envVars = {}) {
   if (capturedToken) {
     for (let i = 1; i <= 3; i++) {
       const rr = await makeRequest({
+        ...orderRequestOptions,
         hostname: "localhost", port: 4000, path: "/orders", method: "GET",
         headers: { Authorization: `Bearer ${capturedToken}` }
       });
@@ -206,6 +262,7 @@ async function runPhase(phaseName, authScript, orderScript, envVars = {}) {
   );
 
   const r4 = await makeRequest({
+    ...orderRequestOptions,
     hostname: "localhost", port: 4000, path: "/orders", method: "GET",
     headers: { Authorization: `Bearer ${manipulated}` }
   });
@@ -216,6 +273,7 @@ async function runPhase(phaseName, authScript, orderScript, envVars = {}) {
     console.log(`│  [+] SECURE: Manipulated claims rejected - HTTP ${r4.status}: ${r4.body}`);
   }
   console.log("└─");
+  return true;
 }
 
 async function main() {
@@ -232,16 +290,17 @@ async function main() {
   installDeps(path.join(ROOT, "attacker"));
 
   // Phase 1: Vulnerable
-  await runPhase(
+  const vulnerablePhaseOk = await runPhase(
     "PHASE 1: VULNERABLE SYSTEM (No Security Controls)",
     "server-vulnerable.js",
     "server-vulnerable.js"
   );
+  if (!vulnerablePhaseOk) throw new Error("Vulnerable phase failed; see the error above.");
 
   await wait(1000);
 
   // Phase 2: Secure
-  await runPhase(
+  const securePhaseOk = await runPhase(
     "PHASE 2: SECURE SYSTEM (Layered Security Framework)",
     "server-secure.js",
     "server-secure.js",
@@ -250,6 +309,7 @@ async function main() {
       ORDER_SERVICE_SECRET: "SecureOrderSecret!456"
     }
   );
+  if (!securePhaseOk) throw new Error("Secure phase failed; see the error above.");
 
   console.log(`\n${"═".repeat(64)}`);
   console.log("  DEMONSTRATION COMPLETE");

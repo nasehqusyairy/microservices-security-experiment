@@ -56,7 +56,12 @@ microservices-security/
 npm run install:all
 ```
 
-### 2. Run the full demo
+### 2. Generate mTLS certificates
+```bash
+npm run certs
+```
+
+### 3. Run the full demo
 ```bash
 node run-local-demo.js
 ```
