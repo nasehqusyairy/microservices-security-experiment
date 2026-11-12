@@ -1,5 +1,3 @@
-version: "3.8"
-
 # SECURE configuration - for Phase 2 with all mitigations active
 # Run: docker-compose -f docker-compose.secure.yml up
 
@@ -8,6 +6,10 @@ services:
     image: mariadb:11.4
     container_name: mse-mariadb
     restart: unless-stopped
+    profiles:
+      - legacy
+    ports:
+      - "127.0.0.1:3307:3306"
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-}
       MARIADB_DATABASE: ${MARIADB_DATABASE:-mse}
@@ -16,11 +18,46 @@ services:
     volumes:
       - mariadb-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p$${MARIADB_ROOT_PASSWORD}"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p\"$${MARIADB_ROOT_PASSWORD}\""]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 15s
+    networks:
+      - microservices-net
+
+  mariadb-experiment:
+    image: mariadb:11.4
+    container_name: mse-mariadb-experiment
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3308:3306"
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: mse
+    volumes:
+      - mariadb-experiment-data:/var/lib/mysql
+      - ./database/init-mariadb-compose.sql:/docker-entrypoint-initdb.d/10-replay-experiment.sql:ro
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - microservices-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: mse-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - microservices-net
 
@@ -44,10 +81,10 @@ services:
     environment:
       - JWT_SECRET=UltraSecureSecret123!XYZ
       - NODE_ENV=production
-      - MARIADB_HOST=mariadb
+      - MARIADB_HOST=mariadb-experiment
       - MARIADB_PORT=3306
       - MARIADB_DATABASE=${MARIADB_DATABASE:-mse}
-      - MARIADB_USER=${MARIADB_USER:-mse}
+      - MARIADB_USER=mse_runner
       - MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
     volumes:
       - ./certs:/app/../certs:ro
@@ -56,7 +93,7 @@ services:
     depends_on:
       auth-service:
         condition: service_started
-      mariadb:
+      mariadb-experiment:
         condition: service_healthy
 
   gateway:
@@ -87,6 +124,7 @@ services:
 
 volumes:
   mariadb-data:
+  mariadb-experiment-data:
 
 networks:
   microservices-net:

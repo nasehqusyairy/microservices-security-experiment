@@ -19,7 +19,8 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { createClient } = require("redis");
-const mariadb = require("mariadb");
+const mysql = require("mysql2/promise");
+const replayConfig = require("./replay-config");
 const {
   InMemoryReplayStore,
   RedisReplayStore,
@@ -54,7 +55,7 @@ if (replayMethod === "in-memory") {
   }
 } else if (replayMethod === "redis" || replayMethod === "redis-ttl") {
   redisClient = createClient({
-    url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
+    url: process.env.REDIS_URL || replayConfig.redis.url,
     socket: {
       connectTimeout: 2000,
       reconnectStrategy: () => false
@@ -71,19 +72,14 @@ if (replayMethod === "in-memory") {
     ? new RedisReplayStore(redisClient, replayPrefix)
     : new RedisTtlReplayStore(redisClient, replayPrefix);
 } else if (replayMethod === "mariadb") {
-  const mariadbConfig = {
-    host: process.env.MARIADB_HOST || "127.0.0.1",
-    port: Number(process.env.MARIADB_PORT || 3306),
-    database: process.env.MARIADB_DATABASE || "mse",
-    user: process.env.MARIADB_USER || "mse",
-    password: process.env.MARIADB_PASSWORD || "",
-    connectionLimit: 10,
-    connectTimeout: 5000,
-    acquireTimeout: 5000,
-    timeout: 5000,
-    multipleStatements: false
-  };
-  mariadbPool = mariadb.createPool(mariadbConfig);
+  mariadbPool = mysql.createPool({
+    ...replayConfig.mariadb,
+    host: process.env.MARIADB_HOST || replayConfig.mariadb.host,
+    port: Number(process.env.MARIADB_PORT || replayConfig.mariadb.port),
+    database: process.env.MARIADB_DATABASE || replayConfig.mariadb.database,
+    user: process.env.MARIADB_USER || replayConfig.mariadb.user,
+    password: process.env.MARIADB_PASSWORD ?? replayConfig.mariadb.password
+  });
   replayStore = new MariaDBReplayStore(mariadbPool, "consumed_tokens");
 } else {
   console.error(`[FATAL] Unsupported REPLAY_METHOD: ${replayMethod}`);
@@ -116,6 +112,7 @@ app.use((req, res, next) => {
 });
 
 app.get("/orders", verifyClientCertificate, verifyToken, (req, res) => {
+  if (experimentMode) res.set("X-Experiment-Protected-Operation-Executed", "true");
   res.json({
     message: "Orders retrieved successfully",
     orders: [
@@ -165,12 +162,20 @@ async function start() {
   });
 
   const shutdown = async () => {
-    server.close();
+    await new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
     if (redisClient && redisClient.isOpen) await redisClient.quit();
     if (mariadbPool) await mariadbPool.end();
   };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
+  const handleShutdown = () => {
+    shutdown().catch((error) => {
+      console.error(`[FATAL] Order Service shutdown failed: ${error.message}`);
+      process.exitCode = 1;
+    });
+  };
+  process.once("SIGTERM", handleShutdown);
+  process.once("SIGINT", handleShutdown);
 }
 
 start().catch((error) => {

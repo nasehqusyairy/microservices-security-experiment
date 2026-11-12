@@ -1,0 +1,13 @@
+scenario_id,method,replica_count,repetition,valid,validation_errors
+S1,in-memory,1,1,True,
+S2,redis,1,1,True,
+S3,redis-ttl,1,1,True,
+S4,mariadb,1,1,True,
+S5,in-memory,2,1,True,
+S6,redis,2,1,True,
+S7,redis-ttl,2,1,True,
+S8,mariadb,2,1,True,
+S9,in-memory,3,1,True,
+S10,redis,3,1,True,
+S11,redis-ttl,3,1,True,
+S12,mariadb,3,1,False,"scenario status is failed; scenario request count is incomplete; requests.csv row count differs from planned requests; missing request phases: concurrent_replay, first_use, performance, replay; restart behavior observations are missing or duplicated; cross-replica replay observation is missing or duplicated"

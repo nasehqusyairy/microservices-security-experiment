@@ -8,7 +8,8 @@ const jwt = require("jsonwebtoken");
 const {
   InMemoryReplayStore,
   RedisReplayStore,
-  RedisTtlReplayStore
+  RedisTtlReplayStore,
+  MariaDBReplayStore
 } = require("../replay-stores");
 const { createReplayMiddleware } = require("../replay-auth");
 const {
@@ -117,6 +118,78 @@ test("Redis TTL uses remaining JWT lifetime and expires the replay key", async (
   assert.equal(key.startsWith("ttl:"), true);
 });
 
+test("MariaDB replay store claims a hashed jti with one atomic INSERT", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql) {
+      statements.push(sql);
+      return [];
+    },
+    async execute(sql, values) {
+      statements.push({ sql, values });
+      return {};
+    }
+  };
+  const store = new MariaDBReplayStore(pool);
+  const result = await store.consume("database-jti", 123456);
+  assert.equal(result.outcome, "accepted");
+  assert.equal(statements.filter((statement) =>
+    typeof statement === "object" && statement.sql.startsWith("INSERT INTO")
+  ).length, 1);
+  assert.match(statements[1].sql, /^INSERT INTO consumed_tokens \(jti_hash, expires_at\) VALUES \(\?, \?\)$/);
+  assert.equal(
+    statements[1].values[0],
+    crypto.createHash("sha256").update("database-jti").digest("hex")
+  );
+  assert.equal(statements[1].values[1], 123456);
+});
+
+test("MariaDB duplicate keys are replays but other database errors are store errors", async () => {
+  const duplicateStore = new MariaDBReplayStore({
+    async query() { return []; },
+    async execute() {
+      const error = new Error("duplicate");
+      error.code = "ER_DUP_ENTRY";
+      error.errno = 1062;
+      throw error;
+    }
+  });
+  assert.equal((await duplicateStore.consume("duplicate-jti", 1)).outcome, "replay_detected");
+
+  const failedStore = new MariaDBReplayStore({
+    async query() { return []; },
+    async execute() {
+      const error = new Error("connection failed");
+      error.code = "ECONNREFUSED";
+      throw error;
+    }
+  });
+  const result = await failedStore.consume("failed-jti", 1);
+  assert.equal(result.outcome, "store_error");
+  assert.equal(result.errorCategory, "ECONNREFUSED");
+});
+
+test("concurrent MariaDB insert claims accept exactly one duplicate jti", async () => {
+  const hashes = new Set();
+  const store = new MariaDBReplayStore({
+    async query() { return []; },
+    async execute(_sql, [jtiHash]) {
+      if (hashes.has(jtiHash)) {
+        const error = new Error("duplicate");
+        error.code = "ER_DUP_ENTRY";
+        error.errno = 1062;
+        throw error;
+      }
+      hashes.add(jtiHash);
+    }
+  });
+  const results = await Promise.all(
+    Array.from({ length: 50 }, () => store.consume("same-database-jti", 123456))
+  );
+  assert.equal(results.filter((result) => result.outcome === "accepted").length, 1);
+  assert.equal(results.filter((result) => result.outcome === "replay_detected").length, 49);
+});
+
 test("JWT validation rejects invalid tokens before consulting replay storage", async () => {
   let storeCalls = 0;
   const middleware = createReplayMiddleware({
@@ -152,7 +225,8 @@ test("experiment CSV has a stable schema and contains no raw token or secret", (
     experiment_id: "experiment",
     request_id: "request",
     jti_hash: "hashed-jti",
-    actual_outcome: "accepted"
+    actual_outcome: "accepted",
+    protected_operation_executed: true
   });
   row.token = token;
   row.secret = secret;
@@ -162,14 +236,17 @@ test("experiment CSV has a stable schema and contains no raw token or secret", (
   assert.equal(csv.trimEnd().split("\n")[1].split(",").length, REQUEST_COLUMNS.length);
   assert.equal(csv.includes(token), false);
   assert.equal(csv.includes(secret), false);
+  assert.ok(REQUEST_COLUMNS.includes("protected_operation_executed"));
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test("summary metrics are reproducible from raw request observations", () => {
   const scenario = { scenario_id: "S1", method: "in-memory", replica_count: 1, repetition: 1 };
   const requests = [
-    { phase: "first_use", legitimate_request: true, actual_outcome: "accepted", latency_ms: 1, store_latency_ms: 0.1 },
-    { phase: "replay", expected_outcome: "replay_detected", replay_detected: true, actual_outcome: "replay_detected", latency_ms: 1.5 },
+    { phase: "first_use", legitimate_request: true, actual_outcome: "accepted", latency_ms: 1, store_latency_ms: 0.1,
+      protected_operation_executed: true },
+    { phase: "replay", expected_outcome: "replay_detected", replay_detected: true, actual_outcome: "replay_detected", latency_ms: 1.5,
+      protected_operation_executed: false },
     { phase: "performance", legitimate_request: true, actual_outcome: "accepted", latency_ms: 2, store_latency_ms: 0.2,
       request_start_timestamp: "2026-01-01T00:00:00.000000000Z",
       request_end_timestamp: "2026-01-01T00:00:01.000000000Z" },
@@ -186,6 +263,7 @@ test("summary metrics are reproducible from raw request observations", () => {
   assert.equal(summary.latency_p99_ms, 3.98);
   assert.equal(summary.throughput_rps, 1);
   assert.equal(summary.restart_state_retained, false);
+  assert.equal(summary.protected_operation_execution_count, 1);
 });
 
 test("concurrent replay metrics exclude one expected first use per jti", () => {

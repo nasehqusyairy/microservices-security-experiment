@@ -4,8 +4,10 @@
 CREATE DATABASE IF NOT EXISTS mse;
 USE mse;
 
-CREATE USER IF NOT EXISTS 'mse'@'localhost' IDENTIFIED BY '';
-GRANT ALL PRIVILEGES ON mse.* TO 'mse'@'localhost';
+CREATE USER IF NOT EXISTS 'mse_runner'@'localhost' IDENTIFIED BY '';
+CREATE USER IF NOT EXISTS 'mse_runner'@'127.0.0.1' IDENTIFIED BY '';
+GRANT CREATE, SELECT, INSERT ON mse.* TO 'mse_runner'@'localhost';
+GRANT CREATE, SELECT, INSERT ON mse.* TO 'mse_runner'@'127.0.0.1';
 FLUSH PRIVILEGES;
 
 CREATE TABLE IF NOT EXISTS consumed_tokens (
@@ -13,8 +15,5 @@ CREATE TABLE IF NOT EXISTS consumed_tokens (
     expires_at BIGINT NOT NULL,
     consumed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
-
-CREATE INDEX idx_consumed_tokens_expires_at
-    ON consumed_tokens (expires_at);
 
 SELECT 'MariaDB replay protection database initialized.' AS status;

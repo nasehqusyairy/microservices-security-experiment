@@ -44,6 +44,7 @@ function createReplayMiddleware({ jwtSecret, replayStore, experimentMode = false
       if (experimentMode) {
         res.set("X-Experiment-Store-Result", "store_error");
         res.set("X-Experiment-Store-Latency-Ms", String(storeLatencyMs));
+        res.set("X-Experiment-Protected-Operation-Executed", "false");
       }
       return res.status(503).send("Replay protection unavailable");
     }
@@ -54,6 +55,9 @@ function createReplayMiddleware({ jwtSecret, replayStore, experimentMode = false
       res.set("X-Experiment-Store-Latency-Ms", String(storeLatencyMs));
       if (result.ttlMs !== undefined) {
         res.set("X-Experiment-Store-Ttl-Ms", String(result.ttlMs));
+      }
+      if (result.outcome !== "accepted") {
+        res.set("X-Experiment-Protected-Operation-Executed", "false");
       }
     }
 

@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
+const { createRequire } = require("module");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
@@ -10,13 +11,14 @@ const path = require("path");
 const net = require("net");
 const tls = require("tls");
 const jwt = require(path.join(__dirname, "auth-service/node_modules/jsonwebtoken"));
+const replayConfig = require("./order-service/replay-config");
 const {
   createExperimentFiles,
   summarizeScenario
 } = require("./experiment-logging");
 
 const ROOT = __dirname;
-const METHODS = ["in-memory", "redis", "redis-ttl", "mariadb"];
+const orderServiceRequire = createRequire(path.join(ROOT, "order-service/package.json"));
 const SCENARIOS = [
   { scenario_id: "S1", method: "in-memory", replica_count: 1 },
   { scenario_id: "S2", method: "redis", replica_count: 1 },
@@ -36,6 +38,7 @@ let activeProcesses = new Set();
 let activeFiles;
 let interrupted = false;
 let totalRequestsLogged = 0;
+const scenarioOutcomes = [];
 const runtimeIssues = [];
 const wallClockOffsetNs = BigInt(Date.now()) * 1_000_000n - process.hrtime.bigint();
 
@@ -83,7 +86,7 @@ function parseOptions(argv) {
     replayCount: parseInteger(values.replays || process.env.EXPERIMENT_REPLAYS || (isFull ? 100 : 10), "replays", 1, 10000),
     concurrencyLevels: [...new Set(concurrencyLevels)],
     output: path.resolve(values.output || process.env.EXPERIMENT_OUTPUT_DIR || path.join(ROOT, "results")),
-    redisUrl: values["redis-url"] || process.env.REDIS_URL || "redis://127.0.0.1:6379",
+    redisUrl: values["redis-url"] || replayConfig.redis.url,
     tokenTtlSeconds: parseInteger(process.env.EXPERIMENT_TOKEN_TTL_SECONDS || 300, "token TTL", 30, 3600)
   };
 }
@@ -166,7 +169,7 @@ function collectDependencies() {
     ["gateway http-proxy-middleware", path.join(ROOT, "gateway/node_modules/http-proxy-middleware")],
     ["order-service express", path.join(ROOT, "order-service/node_modules/express")],
     ["order-service redis client", path.join(ROOT, "order-service/node_modules/redis")],
-    ["order-service mariadb client", path.join(ROOT, "order-service/node_modules/mariadb")]
+    ["order-service mysql2 client", path.join(ROOT, "order-service/node_modules/mysql2")]
   ];
   return dependencies.filter(([, dependencyPath]) => !fs.existsSync(dependencyPath)).map(([name]) => name);
 }
@@ -191,43 +194,189 @@ function validateCertificates(certDir) {
   }
 }
 
+function safeDiagnostic(error, secrets = []) {
+  let message = error && error.message ? error.message : String(error || "Unknown error");
+  for (const secret of secrets.filter(Boolean)) {
+    message = message.split(secret).join("[redacted]");
+  }
+  return message;
+}
+
 async function checkRedis(redisUrl) {
+  let client;
+  let parsedUrl;
+  const status = {
+    available: false,
+    host: null,
+    port: null,
+    version: null,
+    ping: false,
+    atomic_set_nx: false,
+    set_nx_without_ttl: false,
+    set_nx_with_ttl: false,
+    error: null
+  };
   try {
-    const { createClient } = require(path.join(ROOT, "order-service/node_modules/redis"));
-    const client = createClient({
+    parsedUrl = new URL(redisUrl);
+    status.host = parsedUrl.hostname;
+    status.port = Number(parsedUrl.port || 6379);
+    const { createClient } = orderServiceRequire("redis");
+    client = createClient({
       url: redisUrl,
       socket: {
-        connectTimeout: 1000,
+        connectTimeout: 3000,
         reconnectStrategy: () => false
       }
     });
     client.on("error", () => {});
     await client.connect();
+    status.ping = (await client.ping()) === "PONG";
+    if (!status.ping) throw new Error("Redis PING did not return PONG");
+    const key = `mse:preflight:${crypto.randomUUID()}`;
+    const ttlKey = `${key}:ttl`;
+    const [persistentInsert, ttlInsert] = await Promise.all([
+      client.set(key, "probe", { NX: true }),
+      client.set(ttlKey, "probe", { NX: true, PX: 10000 })
+    ]);
+    const [persistentValue, ttlValue, ttlMs] = await Promise.all([
+      client.get(key),
+      client.get(ttlKey),
+      client.pTTL(ttlKey)
+    ]);
+    if (persistentInsert !== "OK" || persistentValue !== "probe") {
+      throw new Error("Redis persistent SET NX/GET replay-store probe failed");
+    }
+    if (ttlInsert !== "OK" || ttlValue !== "probe" || ttlMs <= 0) {
+      throw new Error("Redis TTL SET NX PX/GET/PTTL replay-store probe failed");
+    }
+    status.atomic_set_nx = true;
+    status.set_nx_without_ttl = true;
+    status.set_nx_with_ttl = true;
+    await client.del([key, ttlKey]);
     const version = await client.info("server");
-    await client.quit();
     const match = version.match(/^redis_version:([^\r\n]+)/m);
-    return { available: true, version: match ? match[1] : null };
-  } catch {
-    return { available: false, version: null };
+    status.version = match ? match[1] : null;
+    status.available = true;
+  } catch (error) {
+    status.error = safeDiagnostic(error, [parsedUrl && parsedUrl.password]);
+  } finally {
+    if (client && client.isOpen) {
+      try {
+        await client.quit();
+      } catch {
+        client.disconnect();
+      }
+    }
   }
+  return status;
 }
 
-async function checkMariaDB(config = {}) {
+async function checkMariaDB(config) {
+  const status = {
+    available: false,
+    host: config.host,
+    port: Number(config.port),
+    database: config.database,
+    user: config.user,
+    password_configured: Boolean(config.password),
+    version: null,
+    database_exists: false,
+    table_engine: null,
+    jti_hash_primary_key: false,
+    create_table: false,
+    insert_select: false,
+    privileges: { create: false, insert: false, select: false },
+    error: null
+  };
+  let connection;
   try {
-    const mariadb = require(path.join(ROOT, "order-service/node_modules/mariadb"));
-    const connection = await mariadb.createConnection({
-      host: config.mariadbHost || process.env.MARIADB_HOST || "127.0.0.1",
-      port: Number(config.mariadbPort || process.env.MARIADB_PORT || 3306),
-      user: config.mariadbUser || process.env.MARIADB_USER || "mse",
-      password: config.mariadbPassword || process.env.MARIADB_PASSWORD || "",
-      database: config.mariadbDatabase || process.env.MARIADB_DATABASE || "mse"
+    const mysql = orderServiceRequire("mysql2/promise");
+    connection = await mysql.createConnection(config);
+    const [versionRows] = await connection.query("SELECT VERSION() AS version, DATABASE() AS database_name");
+    status.version = versionRows[0].version;
+    status.database_exists = versionRows[0].database_name === config.database;
+    if (!/mariadb/i.test(status.version)) {
+      throw new Error(`Connected server is not MariaDB (reported ${status.version})`);
+    }
+    if (!status.database_exists) throw new Error(`Connected database does not match ${config.database}`);
+    const [grants] = await connection.query("SHOW GRANTS");
+    const grantStatements = grants.map((row) => String(Object.values(row)[0]));
+    const grantCovers = (privilege) => grantStatements.some((statement) => {
+      const match = statement.match(/^GRANT\s+(.+?)\s+ON\s+(.+?)\s+TO\s+/i);
+      if (!match) return false;
+      const scope = match[2].replace(/`/g, "").toLowerCase();
+      if (scope !== "*.*" && scope !== `${config.database.toLowerCase()}.*`) return false;
+      const granted = match[1].toUpperCase().split(/\s*,\s*/);
+      return granted.includes("ALL PRIVILEGES") || granted.includes(privilege);
     });
-    const result = await connection.query("SELECT VERSION() AS version");
-    await connection.end();
-    return { available: true, version: result && result[0] ? result[0]["VERSION()"] : null };
-  } catch {
-    return { available: false, version: null };
+    status.privileges = {
+      create: grantCovers("CREATE"),
+      insert: grantCovers("INSERT"),
+      select: grantCovers("SELECT")
+    };
+    if (!status.privileges.create || !status.privileges.insert || !status.privileges.select) {
+      throw new Error("Database account must have CREATE, INSERT, and SELECT privileges on the experiment database");
+    }
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS consumed_tokens (
+        jti_hash CHAR(64) NOT NULL PRIMARY KEY,
+        expires_at BIGINT NOT NULL,
+        consumed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    status.create_table = true;
+    const [tables] = await connection.query(
+      "SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+      ["consumed_tokens"]
+    );
+    const [table] = tables;
+    status.table_engine = table ? table.ENGINE : null;
+    if (status.table_engine !== "InnoDB") {
+      throw new Error(`consumed_tokens must use InnoDB (found ${status.table_engine || "missing"})`);
+    }
+    const [primaryKeys] = await connection.query(
+      "SELECT COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'jti_hash'",
+      ["consumed_tokens"]
+    );
+    const [primaryKey] = primaryKeys;
+    status.jti_hash_primary_key = Boolean(primaryKey && primaryKey.COLUMN_KEY === "PRI");
+    if (!status.jti_hash_primary_key) throw new Error("consumed_tokens.jti_hash must be the primary key");
+
+    await connection.beginTransaction();
+    try {
+      const probeHash = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
+      await connection.query(
+        "INSERT INTO consumed_tokens (jti_hash, expires_at) VALUES (?, ?)",
+        [probeHash, Math.floor(Date.now() / 1000) + 60]
+      );
+      const [rows] = await connection.query(
+        "SELECT jti_hash FROM consumed_tokens WHERE jti_hash = ?",
+        [probeHash]
+      );
+      if (rows.length !== 1 || rows[0].jti_hash !== probeHash) {
+        throw new Error("MariaDB INSERT/SELECT replay-store probe returned unexpected data");
+      }
+      await connection.rollback();
+      status.insert_select = true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    }
+    status.available = true;
+  } catch (error) {
+    status.error = safeDiagnostic(error, [config.password]);
+  } finally {
+    if (connection) {
+      try {
+        await connection.end();
+      } catch (error) {
+        status.available = false;
+        status.error = `MariaDB connection cleanup failed: ${safeDiagnostic(error, [config.password])}`;
+      }
+    }
   }
+  return status;
 }
 
 function allocatePort() {
@@ -248,7 +397,11 @@ function spawnService(name, cwd, script, env) {
     stdio: ["ignore", "pipe", "pipe"]
   });
   child.experimentName = name;
-  child.stderr.on("data", () => {});
+  child.stderrTail = "";
+  const captureStderr = (chunk) => {
+    child.stderrTail = `${child.stderrTail}${chunk.toString("utf8")}`.slice(-4000);
+  };
+  child.stderr.on("data", captureStderr);
   child.stdout.on("data", () => {});
   child.once("exit", (code, signal) => {
     activeProcesses.delete(child);
@@ -300,8 +453,18 @@ function request(options, body) {
   });
 }
 
-async function waitReady(url, options = {}) {
+async function waitReady(url, options = {}, child) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      const exit = child.signalCode
+        ? `signal ${child.signalCode}`
+        : `exit code ${child.exitCode}`;
+      const detail = child.stderrTail.trim();
+      throw new Error(
+        `${child.experimentName} stopped with ${exit} before health check` +
+        (detail ? `: ${detail}` : "")
+      );
+    }
     try {
       const parsed = new URL(url);
       const response = await request({
@@ -361,10 +524,6 @@ function targetReplica(index, replicaCount) {
   return `order-${(index % replicaCount) + 1}`;
 }
 
-function expectedReplica(replicaId) {
-  return replicaId || "";
-}
-
 function outcomeFrom(response) {
   if (response.status === 200) return "accepted";
   if (response.status === 403 && response.headers["x-experiment-store-result"] === "replay_detected") {
@@ -405,22 +564,31 @@ async function measuredRequest(context) {
   const latencyMs = Number(endNanos - startNanos) / 1e6;
   const actualOutcome = requestError ? "request_error" : outcomeFrom(response);
   const header = (name) => response && response.headers[name];
+  const actualReplicaId = header("x-experiment-replica") || null;
+  const protectedOperationHeader = header("x-experiment-protected-operation-executed");
   const row = {
     experiment_id: context.experimentId,
     scenario_id: context.scenario.scenario_id,
     repetition: context.repetition,
     method: context.scenario.method,
+    replay_store: context.scenario.method,
     replica_count: context.scenario.replica_count,
     phase: context.phase,
+    request_type: context.phase,
     request_id: requestId,
     jti_hash: context.token.jtiHash,
-    replica_id: expectedReplica(header("x-experiment-replica") || context.replicaId),
+    requested_replica_id: context.replicaId,
+    replica_id: actualReplicaId,
+    routing_correct: actualReplicaId ? actualReplicaId === context.replicaId : null,
     sequence_number: context.sequenceNumber,
     concurrency_level: context.concurrencyLevel || 1,
+    concurrent_batch_id: context.concurrentBatchId || "",
+    timestamp: startTimestamp,
     request_start_timestamp: startTimestamp,
     request_end_timestamp: endTimestamp,
     latency_ms: latencyMs,
     http_status: response ? response.status : "",
+    status: response ? response.status : "",
     expected_outcome: context.expectedOutcome,
     actual_outcome: actualOutcome,
     outcome_correct: actualOutcome === context.expectedOutcome,
@@ -430,6 +598,11 @@ async function measuredRequest(context) {
     store_latency_ms: header("x-experiment-store-latency-ms") || "",
     store_ttl_ms: header("x-experiment-store-ttl-ms") || "",
     replay_context: context.replayContext || "",
+    protected_operation_executed: protectedOperationHeader === "true"
+      ? true
+      : protectedOperationHeader === "false"
+        ? false
+        : null,
     error_category: requestError
       ? "request_error"
       : actualOutcome === "store_error"
@@ -462,47 +635,9 @@ function persistRequest(row) {
   });
 }
 
-function recordScenarioFailure(files, experimentId, scenario, repetition, reason, startedAt, config) {
-  const endTime = timestamp();
-  const row = {
-    experiment_id: experimentId,
-    scenario_id: scenario.scenario_id,
-    method: scenario.method,
-    replica_count: scenario.replica_count,
-    repetition,
-    planned_requests: plannedRequestCount(scenario, config),
-    completed_requests: 0,
-    accepted_requests: 0,
-    rejected_requests: 0,
-    replay_attempts: 0,
-    replay_blocked: 0,
-    legitimate_requests: 0,
-    legitimate_accepted: 0,
-    error_count: 1,
-    status: "failed",
-    reason,
-    start_time: startedAt,
-    end_time: endTime
-  };
-  files.scenario(row);
-  files.summary(summarizeScenario({
-    experimentId,
-    scenario: { ...scenario, repetition },
-    requests: [],
-    restartStateRetained: null
-  }));
-  files.event({
-    event: "scenario_completed",
-    scenario_id: scenario.scenario_id,
-    repetition,
-    status: "failed",
-    reason
-  });
-}
-
 function plannedRequestCount(scenario, config) {
   return config.requestCount + config.replayCount +
-    (scenario.replica_count === 2 ? 2 : 0) +
+    (scenario.replica_count > 1 ? 2 : 0) +
     config.concurrencyLevels.reduce((sum, level) => sum + level, 0) +
     config.requestCount * config.concurrencyLevels.length + 3;
 }
@@ -517,7 +652,7 @@ function replayAttemptCount(requests) {
   return replayRows + [...concurrentGroups.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
 }
 
-async function runScenario({ experimentId, scenario, repetition, config, authPort, experimentKey, certDir, redisAvailable, mariadbAvailable }) {
+async function runScenario({ experimentId, scenario, repetition, config, authPort, experimentKey, certDir }) {
   const scenarioStart = timestamp();
   appendEvent("scenario_started", {
     scenario_id: scenario.scenario_id,
@@ -527,36 +662,11 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
   });
   const requests = [];
   const prefix = scenarioPrefix(experimentId, scenario, repetition);
-  const redisMethod = scenario.method !== "in-memory";
   let gatewayProcess;
   const orderProcesses = new Map();
   let gatewayPort;
   const scenarioErrors = [];
   let restartStateRetained = null;
-
-  if ((scenario.method === "redis" || scenario.method === "redis-ttl") && !redisAvailable) {
-    runtimeIssues.push({
-      scenario_id: scenario.scenario_id,
-      repetition,
-      category: "redis_unavailable",
-      message: "Redis is unavailable; Redis methods were not run"
-    });
-    recordScenarioFailure(activeFiles, experimentId, { ...scenario, repetition }, repetition,
-      "Redis is unavailable; Redis methods were not run", scenarioStart, config);
-    return;
-  }
-
-  if (scenario.method === "mariadb" && !mariadbAvailable) {
-    runtimeIssues.push({
-      scenario_id: scenario.scenario_id,
-      repetition,
-      category: "mariadb_unavailable",
-      message: "MariaDB is unavailable; MariaDB methods were not run"
-    });
-    recordScenarioFailure(activeFiles, experimentId, { ...scenario, repetition }, repetition,
-      "MariaDB is unavailable; MariaDB methods were not run", scenarioStart, config);
-    return;
-  }
 
   async function startOrder(replicaId, port) {
     const child = spawnService(
@@ -568,11 +678,6 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
         REPLAY_METHOD: scenario.method,
         REPLAY_KEY_PREFIX: prefix,
         REDIS_URL: config.redisUrl,
-        MARIADB_HOST: process.env.MARIADB_HOST || "127.0.0.1",
-        MARIADB_PORT: String(process.env.MARIADB_PORT || 3306),
-        MARIADB_DATABASE: process.env.MARIADB_DATABASE || "mse",
-        MARIADB_USER: process.env.MARIADB_USER || "mse",
-        MARIADB_PASSWORD: process.env.MARIADB_PASSWORD || "",
         JWT_SECRET: process.env.__MSE_EXPERIMENT_JWT_SECRET,
         CERTS_DIR: certDir,
         PORT: String(port),
@@ -587,7 +692,7 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       key: fs.readFileSync(path.join(certDir, "client.key")),
       servername: "order-service",
       rejectUnauthorized: true
-    });
+    }, child);
     if (JSON.parse(health.body).replica_id !== replicaId) {
       throw new Error(`Order Service ${replicaId} health identity mismatch`);
     }
@@ -609,7 +714,7 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       PORT: String(gatewayPort),
       ORDER_SERVICE_TARGETS: JSON.stringify(targets)
     });
-    await waitReady(`http://127.0.0.1:${gatewayPort}/health`);
+    await waitReady(`http://127.0.0.1:${gatewayPort}/health`, {}, gatewayProcess);
     appendEvent("service_started", {
       service: "gateway",
       scenario_id: scenario.scenario_id,
@@ -622,8 +727,9 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
     requests.push(row);
     persistRequest(row);
     if (row.error_category) scenarioErrors.push(row.error_category);
-    return row;
-  }
+      if (row.routing_correct === false) scenarioErrors.push("replica_routing_mismatch");
+      return row;
+    }
 
   try {
     for (let index = 0; index < scenario.replica_count; index += 1) {
@@ -665,7 +771,8 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       }));
     }
 
-    if (scenario.replica_count === 2) {
+    if (scenario.replica_count > 1) {
+      const replayReplicaId = targetReplica(1, scenario.replica_count);
       const crossToken = (await requestTokens(authPort, experimentKey, 1, "cross_replica"))[0];
       record(await measuredRequest({
         experimentId, scenario, repetition, gatewayPort, token: crossToken,
@@ -674,7 +781,9 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       }));
       record(await measuredRequest({
         experimentId, scenario, repetition, gatewayPort, token: crossToken,
-        replicaId: "order-2", phase: "replay", expectedOutcome: "replay_detected",
+        replicaId: replayReplicaId,
+        phase: "replay",
+        expectedOutcome: scenario.method === "in-memory" ? "accepted" : "replay_detected",
         replayContext: "cross_replica", sequenceNumber: config.requestCount + 1, legitimateRequest: false
       }));
     }
@@ -682,28 +791,57 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
     let sequenceNumber = 0;
     for (const concurrencyLevel of config.concurrencyLevels) {
       const concurrentToken = (await requestTokens(authPort, experimentKey, 1, "concurrent_replay"))[0];
+      const concurrentBatchId = crypto.randomUUID();
       const concurrentRows = await Promise.all(Array.from({ length: concurrencyLevel }, (_, index) =>
         measuredRequest({
           experimentId, scenario, repetition, gatewayPort, token: concurrentToken,
           replicaId: targetReplica(index, scenario.replica_count),
           phase: "concurrent_replay",
-          expectedOutcome: "one_accepted_per_jti",
+          expectedOutcome: scenario.method === "in-memory"
+            ? "one_acceptance_per_replica"
+            : "one_acceptance_per_jti",
           sequenceNumber: index + 1,
           concurrencyLevel,
+          concurrentBatchId,
           legitimateRequest: false
         })
       ));
-      const acceptedIndex = concurrentRows.findIndex((row) => row.actual_outcome === "accepted");
-      const expectedAcceptedIndex = acceptedIndex >= 0 ? acceptedIndex : 0;
-      const validBatch = acceptedIndex >= 0 &&
-        concurrentRows.filter((row) => row.actual_outcome === "accepted").length === 1 &&
-        concurrentRows.every((row, index) => index === acceptedIndex || row.actual_outcome === "replay_detected");
-      concurrentRows.forEach((row, index) => {
-        row.legitimate_request = index === expectedAcceptedIndex;
+      const acceptedByReplica = new Map();
+      for (const row of concurrentRows.filter((item) => item.actual_outcome === "accepted")) {
+        acceptedByReplica.set(row.replica_id, (acceptedByReplica.get(row.replica_id) || 0) + 1);
+      }
+      const observedReplicas = [...new Set(concurrentRows.map((row) => row.replica_id).filter(Boolean))].sort();
+      const expectedObservedReplicas = [...new Set(concurrentRows.map((row) => row.requested_replica_id))].sort();
+      const sharedStateValid = concurrentRows.filter((row) => row.actual_outcome === "accepted").length === 1 &&
+        concurrentRows.every((row) => ["accepted", "replay_detected"].includes(row.actual_outcome));
+      const localStateValid = acceptedByReplica.size === expectedObservedReplicas.length &&
+        [...acceptedByReplica.values()].every((count) => count === 1) &&
+        concurrentRows.every((row) => ["accepted", "replay_detected"].includes(row.actual_outcome));
+      const distributionValid = concurrentRows.every((row) => row.routing_correct === true) &&
+        (concurrencyLevel < scenario.replica_count ||
+          expectedObservedReplicas.every((replicaId) => observedReplicas.includes(replicaId)));
+      const validBatch = distributionValid &&
+        (scenario.method === "in-memory" ? localStateValid : sharedStateValid);
+      concurrentRows.forEach((row) => {
         row.outcome_correct = validBatch;
-        row.expected_outcome = index === expectedAcceptedIndex ? "accepted" : "replay_detected";
         record(row);
       });
+      appendEvent("concurrent_replay_distribution", {
+        scenario_id: scenario.scenario_id,
+        repetition,
+        batch_id: concurrentBatchId,
+        concurrency_level: concurrencyLevel,
+        requested_replicas: concurrentRows.reduce((counts, row) => {
+          counts[row.requested_replica_id] = (counts[row.requested_replica_id] || 0) + 1;
+          return counts;
+        }, {}),
+        observed_replicas: concurrentRows.reduce((counts, row) => {
+          if (row.replica_id) counts[row.replica_id] = (counts[row.replica_id] || 0) + 1;
+          return counts;
+        }, {}),
+        invariant_valid: validBatch
+      });
+      if (!validBatch) scenarioErrors.push("concurrent_replay_invariant_failed");
 
       for (let offset = 0; offset < config.requestCount; offset += concurrencyLevel) {
         const batchSize = Math.min(concurrencyLevel, config.requestCount - offset);
@@ -784,13 +922,19 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       legitimate_accepted: requests.filter((row) =>
         row.legitimate_request && row.actual_outcome === "accepted"
       ).length,
+      protected_operation_execution_count: requests.filter(
+        (row) => row.protected_operation_executed === true
+      ).length,
       error_count: scenarioErrors.length,
-      status: scenarioErrors.length ? "partial" : "completed",
+      status: scenarioErrors.length || completed !== plannedRequestCount(scenario, config)
+        ? "partial"
+        : "completed",
       reason: scenarioErrors.length ? [...new Set(scenarioErrors)].join("; ") : "",
       start_time: scenarioStart,
       end_time: timestamp()
     };
     activeFiles.scenario(scenarioRow);
+    scenarioOutcomes.push(scenarioRow);
     if (scenarioErrors.length) {
       runtimeIssues.push({
         scenario_id: scenario.scenario_id,
@@ -827,7 +971,7 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       message: error.message
     });
     const endTime = timestamp();
-    activeFiles.scenario({
+    const failedScenario = {
       experiment_id: experimentId,
       scenario_id: scenario.scenario_id,
       method: scenario.method,
@@ -844,12 +988,17 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       ).length,
       legitimate_requests: requests.filter((row) => row.legitimate_request).length,
       legitimate_accepted: requests.filter((row) => row.legitimate_request && row.actual_outcome === "accepted").length,
+      protected_operation_execution_count: requests.filter(
+        (row) => row.protected_operation_executed === true
+      ).length,
       error_count: scenarioErrors.length + 1,
       status: "failed",
       reason: error.message,
       start_time: scenarioStart,
       end_time: endTime
-    });
+    };
+    activeFiles.scenario(failedScenario);
+    scenarioOutcomes.push(failedScenario);
     activeFiles.summary(summarizeScenario({
       experimentId,
       scenario: { ...scenario, repetition },
@@ -877,33 +1026,47 @@ async function main() {
   const { directory: outputDir, experimentId } = createOutputDirectory(config.output);
   activeFiles = createExperimentFiles(outputDir);
   const startTime = timestamp();
-  const warnings = [];
   const errors = [];
   const certDir = path.resolve(process.env.CERTS_DIR || path.join(ROOT, "certs"));
   const certificateStatus = validateCertificates(certDir);
   const missingDependencies = collectDependencies();
-  let redisStatus = { available: false, version: null };
-  let mariadbStatus = { available: false, version: null };
+  let redisStatus = {
+    available: false,
+    host: null,
+    port: null,
+    version: null,
+    ping: false,
+    atomic_set_nx: false,
+    set_nx_without_ttl: false,
+    set_nx_with_ttl: false,
+    error: "Redis client dependency is missing"
+  };
+  let mariadbStatus = {
+    available: false,
+    host: replayConfig.mariadb.host,
+    port: replayConfig.mariadb.port,
+    database: replayConfig.mariadb.database,
+    user: replayConfig.mariadb.user,
+    password_configured: Boolean(replayConfig.mariadb.password),
+    version: null,
+    database_exists: false,
+    table_engine: null,
+    jti_hash_primary_key: false,
+    create_table: false,
+    insert_select: false,
+    privileges: { create: false, insert: false, select: false },
+    error: "MariaDB client dependency is missing"
+  };
   if (!missingDependencies.includes("order-service redis client")) {
     redisStatus = await checkRedis(config.redisUrl);
   }
-  if (!missingDependencies.includes("order-service mariadb client")) {
-    mariadbStatus = await checkMariaDB({
-      mariadbHost: process.env.MARIADB_HOST,
-      mariadbPort: process.env.MARIADB_PORT,
-      mariadbDatabase: process.env.MARIADB_DATABASE,
-      mariadbUser: process.env.MARIADB_USER,
-      mariadbPassword: process.env.MARIADB_PASSWORD
-    });
+  if (!missingDependencies.includes("order-service mysql2 client")) {
+    mariadbStatus = await checkMariaDB(replayConfig.mariadb);
   }
   if (missingDependencies.length) errors.push(`Missing dependencies: ${missingDependencies.join(", ")}`);
   if (certificateStatus.error) errors.push(certificateStatus.error);
-  if ((METHODS.some((method) => method === "redis" || method === "redis-ttl")) && !redisStatus.available) {
-    warnings.push("Redis unavailable; Redis and Redis-TTL scenarios will be recorded as failed.");
-  }
-  if (METHODS.includes("mariadb") && !mariadbStatus.available) {
-    warnings.push("MariaDB unavailable; MariaDB scenarios will be recorded as failed.");
-  }
+  if (!redisStatus.available) errors.push(`Redis preflight failed: ${redisStatus.error}`);
+  if (!mariadbStatus.available) errors.push(`MariaDB preflight failed: ${mariadbStatus.error}`);
 
   const experimentSecret = crypto.randomBytes(32).toString("hex");
   const experimentKey = crypto.randomBytes(32).toString("hex");
@@ -919,8 +1082,10 @@ async function main() {
     total_memory_bytes: os.totalmem(),
     redis_version: redisStatus.version,
     redis_available: redisStatus.available,
+    redis_preflight: redisStatus,
     mariadb_version: mariadbStatus.version,
     mariadb_available: mariadbStatus.available,
+    mariadb_preflight: mariadbStatus,
     configuration: {
       mode: config.mode,
       repetitions: config.repetitions,
@@ -929,10 +1094,18 @@ async function main() {
       concurrency_levels: config.concurrencyLevels,
       token_lifetime_seconds: config.tokenTtlSeconds,
       redis_url: sanitizedRedisUrl(config.redisUrl),
+      database_client: "mysql2/promise",
+      database_config_file: "order-service/replay-config.js",
+      mariadb: {
+        host: replayConfig.mariadb.host,
+        port: replayConfig.mariadb.port,
+        database: replayConfig.mariadb.database,
+        user: replayConfig.mariadb.user
+      },
       output_directory: outputDir
     },
     methods: {
-      "in-memory": "Process-local Set keyed by SHA-256(jti); state is lost on service restart.",
+      "in-memory": "Process-local Set keyed by raw jti; state is lost on service restart.",
       redis: "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
       "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",
       mariadb: "Shared MariaDB InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
@@ -954,15 +1127,20 @@ async function main() {
       ),
       completed_measured_requests: 0
     },
-    request_schema_version: 1,
+    request_schema_version: 2,
     measurement: {
       latency: "Runner-observed end-to-end HTTP latency using process.hrtime.bigint(); excludes token setup and health checks.",
       throughput: "Completed performance-phase requests divided by wall-clock span of recorded performance request start/end timestamps.",
       percentiles: "Linear interpolation between adjacent sorted observations; standard deviation uses sample formula (n-1).",
       store_latency: "Order Service's internal replay-store consume() duration, returned in an experiment-only response header.",
+      protected_operation_execution: "True only when the protected /orders handler sets its explicit execution response header; false for known store rejections/errors and null when not observable.",
       resource_metrics: "CPU and process memory utilization were not sampled; summary columns remain empty."
     },
-    warnings,
+    preflight: {
+      passed: errors.length === 0,
+      checked_at: startTime,
+      errors: [...errors]
+    },
     errors
   };
   writeMetadata(metadata, outputDir);
@@ -972,6 +1150,22 @@ async function main() {
   }
   if (mariadbStatus.available) {
     activeFiles.event({ event: "mariadb_ready", mariadb_version: mariadbStatus.version });
+  }
+  if (errors.length) {
+    metadata.end_time = timestamp();
+    metadata.errors = errors;
+    metadata.preflight.passed = false;
+    metadata.request_counts.completed_measured_requests = 0;
+    writeMetadata(metadata, outputDir);
+    activeFiles.event({ event: "preflight_failed", errors });
+    console.error("Preflight failed; no experiment scenarios were run.");
+    console.error(JSON.stringify({
+      redis: redisStatus,
+      mariadb: { ...mariadbStatus, password_configured: mariadbStatus.password_configured }
+    }, null, 2));
+    console.error(`Preflight report: ${outputDir}`);
+    process.exitCode = 1;
+    return;
   }
 
   let authProcess;
@@ -988,7 +1182,7 @@ async function main() {
         ORDER_SERVICE_SECRET: crypto.randomBytes(32).toString("hex"),
         PORT: String(authPort)
       });
-      await waitReady(`http://127.0.0.1:${authPort}/health`);
+      await waitReady(`http://127.0.0.1:${authPort}/health`, {}, authProcess);
       authReady = true;
       appendEvent("service_started", { service: "auth-service", port: authPort });
     } catch (error) {
@@ -997,20 +1191,25 @@ async function main() {
     }
   }
 
+  if (!authReady) {
+    await cleanup();
+    metadata.end_time = timestamp();
+    metadata.errors = [...errors, ...runtimeIssues];
+    metadata.preflight.passed = false;
+    writeMetadata(metadata, outputDir);
+    activeFiles.event({ event: "experiment_aborted", reason: metadata.errors.join("; ") });
+    console.error(`Auth Service preflight failed; no scenarios were run. Report: ${outputDir}`);
+    process.exitCode = 1;
+    return;
+  }
+
   try {
     for (const scenario of SCENARIOS) {
       for (let repetition = 1; repetition <= config.repetitions; repetition += 1) {
         if (interrupted) break;
-        if (errors.length || !authReady) {
-          recordScenarioFailure(activeFiles, experimentId, scenario, repetition,
-            errors.join("; ") || "Auth Service unavailable", timestamp(), config);
-          continue;
-        }
         console.log(`[${scenario.scenario_id} ${repetition}/${config.repetitions}] ${scenario.method}, ${scenario.replica_count} replica(s)`);
         await runScenario({
-          experimentId, scenario, repetition, config, authPort, experimentKey, certDir,
-          redisAvailable: redisStatus.available,
-          mariadbAvailable: mariadbStatus.available
+          experimentId, scenario, repetition, config, authPort, experimentKey, certDir
         });
       }
       if (interrupted) break;
@@ -1021,9 +1220,16 @@ async function main() {
 
   metadata.end_time = timestamp();
   metadata.request_counts.completed_measured_requests = totalRequestsLogged;
-  metadata.warnings = warnings;
   metadata.errors = [...errors, ...runtimeIssues];
   metadata.interrupted = interrupted;
+  metadata.scenario_counts = {
+    planned: SCENARIOS.length * config.repetitions,
+    completed: scenarioOutcomes.filter((row) => row.status === "completed" &&
+      row.completed_requests === row.planned_requests).length,
+    partial: scenarioOutcomes.filter((row) => row.status === "partial").length,
+    failed: scenarioOutcomes.filter((row) => row.status === "failed").length,
+    not_run: SCENARIOS.length * config.repetitions - scenarioOutcomes.length
+  };
   writeMetadata(metadata, outputDir);
   activeFiles.event({
     event: "experiment_completed",
@@ -1034,6 +1240,7 @@ async function main() {
   console.log(`\nExperiment results: ${outputDir}`);
   console.log("Generated: metadata.json, scenarios.csv, requests.csv, summary.csv, events.jsonl");
   if (interrupted) process.exitCode = 130;
+  else if (metadata.scenario_counts.completed !== metadata.scenario_counts.planned) process.exitCode = 1;
 }
 
 process.once("SIGINT", () => {

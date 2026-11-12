@@ -1,0 +1,3 @@
+{"timestamp":"2026-11-12T19:55:18.180Z","event":"experiment_started","experiment_id":"replay-2026-11-12T19-55-18-037Z-d61710fa","mode":"quick"}
+{"timestamp":"2026-11-12T19:55:18.180Z","event":"redis_ready","redis_version":"7.4.12"}
+{"timestamp":"2026-11-12T19:55:18.180Z","event":"preflight_failed","errors":["MariaDB preflight failed: Cannot find module '/home/nasyikhqusyairy/Projects/repositories/mse/order-service/node_modules/mariadb'\nRequire stack:\n- /home/nasyikhqusyairy/Projects/repositories/mse/run-local-demo-2.js"]}

@@ -1,0 +1,3 @@
+{"timestamp":"2026-11-12T20:06:40.690Z","event":"experiment_started","experiment_id":"replay-2026-11-12T20-06-40-519Z-86e30b73","mode":"full"}
+{"timestamp":"2026-11-12T20:06:40.690Z","event":"redis_ready","redis_version":"7.4.12"}
+{"timestamp":"2026-11-12T20:06:40.690Z","event":"preflight_failed","errors":["MariaDB preflight failed: Database account must have CREATE, INSERT, and SELECT privileges on the experiment database"]}

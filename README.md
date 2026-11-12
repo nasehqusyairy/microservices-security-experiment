@@ -233,7 +233,7 @@ using `REPLAY_METHOD`:
 | `in-memory` | Process-local Set; atomically accepts a `jti` once, but replicas and restarts have independent/empty state. |
 | `redis` | Atomic Redis `SET NX`; shared across replicas and retained without expiry for the experiment. |
 | `redis-ttl` | Atomic Redis `SET NX PX`; entry TTL is the JWT's remaining lifetime. |
-| `mariadb` | Shared MariaDB InnoDB table using `INSERT ... VALUES (...)` on a SHA-256 `jti_hash` primary key; duplicate inserts are classified as replay detection and DB failures as `store_error`. |
+| `mariadb` | Shared MariaDB InnoDB table accessed with the `mysql2/promise` driver, using atomic `INSERT ... VALUES (...)` on a SHA-256 `jti_hash` primary key; duplicate inserts are classified as replay detection and DB failures as `store_error`. |
 
 JWT signature, issuer, audience, service identity, expiry, and `jti` validation
 are the same for all methods and happen before replay-store lookup. Redis
@@ -261,11 +261,13 @@ the `jti`. The experimental token-provisioning route is available only when
 | S12 | mariadb | 3 |
 
 Each repetition starts clean Order Service processes and uses a unique Redis
-key prefix. The two-replica run routes requests deterministically to
-`order-1`/`order-2` through an experiment-only gateway selector. It measures
-same-replica replays, cross-replica replays, simultaneous duplicate requests,
-and replay state after restarting `order-1`. Restart checks use a newly issued
-token and verify it remains unexpired before testing.
+key prefix. Requests are routed by replica ID through an experiment-only
+gateway selector and the actual receiving replica is logged and checked.
+Scenarios with two or three replicas include a first use and a replay at
+different replicas. Concurrent batches record request IDs and the requested
+and observed request distribution for every replica. In-memory concurrency is
+validated per replica; Redis and MariaDB concurrency is validated globally.
+Each run also measures replay state after restarting `order-1`.
 
 ### Run the experiment
 
@@ -276,13 +278,27 @@ npm run install:all
 npm run certs
 ```
 
-Start Redis in a separate terminal for all six scenarios:
+Start the shared experiment dependencies. The Compose file keeps the previous
+MariaDB volume intact and uses a dedicated experiment database on host port
+3308, avoiding collision with a locally installed database on port 3306:
 
 ```bash
-docker run --rm --name mse-redis -p 6379:6379 redis:7-alpine
+docker compose -f docker-compose.secure.yml up -d mariadb-experiment redis
+docker compose -f docker-compose.secure.yml ps mariadb-experiment redis
 ```
 
-Then run the quick experiment (1 repetition, 10 legitimate requests, 10 replay
+For a native MariaDB installation instead, execute
+`database/init-replay-mariadb.sql` as the local root account, then set the
+host/port in [order-service/replay-config.js](./order-service/replay-config.js)
+to the native server (normally `127.0.0.1:3306`). The runner uses the `mysql2/promise` driver and this JS
+configuration for both preflight and Order Service connections; database
+credentials are not read from environment variables. The defaults use the
+requested local `root` account with an empty password, and preflight verifies
+that it accepts TCP and has the required privileges. If the local root account
+is socket-only, change the configured user to `mse_runner`; the SQL script
+creates that account with only CREATE, INSERT, and SELECT privileges.
+
+Run the quick experiment (1 repetition, 10 legitimate requests, 10 replay
 attempts, concurrency levels 1 and 5):
 
 ```bash
@@ -296,7 +312,9 @@ concurrency 1, 10, and 50):
 node run-local-demo-2.js --mode full
 ```
 
-Configuration can be overridden with CLI flags or environment variables:
+Experiment counts can be configured with CLI flags or their existing
+`EXPERIMENT_*` variables. Redis can be overridden with `--redis-url`;
+MariaDB/Redis defaults live in `order-service/replay-config.js`.
 
 ```bash
 node run-local-demo-2.js --mode quick --repetitions 2 --requests 20 \
@@ -304,12 +322,15 @@ node run-local-demo-2.js --mode quick --repetitions 2 --requests 20 \
 REDIS_URL=redis://127.0.0.1:6379 node run-local-demo-2.js --mode full
 ```
 
-Supported environment variables include `EXPERIMENT_REPETITIONS`,
+Supported experiment environment variables include `EXPERIMENT_REPETITIONS`,
 `EXPERIMENT_REQUESTS`, `EXPERIMENT_REPLAYS`, `EXPERIMENT_CONCURRENCY`,
-`EXPERIMENT_OUTPUT_DIR`, `EXPERIMENT_TOKEN_TTL_SECONDS`, `REDIS_URL`, and
-`CERTS_DIR`. Missing/invalid certificates or service failures are recorded in
-scenario results. When Redis is unavailable, its scenarios are explicitly
-marked `failed`; in-memory scenarios still run.
+`EXPERIMENT_OUTPUT_DIR`, `EXPERIMENT_TOKEN_TTL_SECONDS`, and `CERTS_DIR`.
+Before any scenario starts, preflight checks Redis `PING`, atomic `SET NX`
+with and without TTL, and MariaDB TCP connection, version, database,
+privileges, InnoDB engine, primary key, and transactional INSERT/SELECT.
+Failures include a sanitized reason in `metadata.json`, stop the run, create
+no scenario results, and return a non-zero exit code. Partial scenarios never
+count as completed.
 
 Every invocation creates a unique output folder and writes observations as it
 runs:
@@ -324,10 +345,11 @@ results/replay-<UTC timestamp>-<id>/
 ```
 
 `requests.csv` is the source of truth: one row per measured first use, replay,
-concurrent replay, and performance request. It includes a one-way `jti_hash`,
-chosen replica, UTC timestamps, end-to-end latency, HTTP/store outcomes, and
-internal store latency when available. It never writes JWTs or secrets.
-`scenarios.csv` records completed/failed scenario status and counts.
+concurrent replay, and performance request. It includes request ID, one-way
+`jti_hash`, method/store, requested and actual replica, request type/timestamps,
+HTTP/store outcomes, and protected-operation execution evidence. Unknown
+execution state remains empty, not `false`; JWTs and credentials are never
+written. `scenarios.csv` records completed/partial/failed status and counts.
 `summary.csv` groups security and performance metrics by scenario and
 repetition. Percentiles use linear interpolation; standard deviation uses the
 sample formula. Throughput is completed performance requests divided by the
@@ -343,21 +365,23 @@ python3 -m pip install pandas matplotlib
 python3 analysis/analyze_replay_protection.py results/<experiment-directory>
 ```
 
-The script loads and validates the metadata and generated CSV schemas, displays
-dimensions/missing values, recomputes security and latency metrics from raw
-requests, and saves derived tables and plots in
-`results/<experiment-directory>/analysis/`. To use it interactively in
-Jupyter:
+The script validates that all 12 method/replica configurations and their
+repetitions completed, verifies routing/concurrency/restart/protected-operation
+observations, recomputes metrics from `requests.csv`, and compares them with
+`summary.csv`. It writes a validation report and derived tables. Comparison
+plots are emitted only when the full matrix is available and valid; otherwise
+the analysis exits non-zero and marks the run invalid. To use it interactively
+in Jupyter:
 
 ```bash
 python3 -m pip install jupyter pandas matplotlib
 jupyter lab
 ```
 
-In JupyterLab's file browser open
-`analysis/replay_protection_analysis.ipynb`, set the experiment directory in
-its first code cell, then run the notebook cells. Alternatively, run the
-script from a terminal or a notebook cell:
+In JupyterLab, open `analysis/replay_protection_analysis_validated.ipynb` and
+set the explicit experiment path in its setup cell. The three notebooks use
+the same validator and do not display comparison plots for invalid/incomplete
+runs. Alternatively, run the script from a terminal:
 
 ```python
 %run analysis/analyze_replay_protection.py results/<experiment-directory>
@@ -369,17 +393,25 @@ summary = pd.read_csv("results/<experiment-directory>/summary.csv")
 
 ### Metrics and reproducibility notes
 
-- Replay detection rate = rejected replay attempts / replay attempts, including
-  same-replica, cross-replica, restart, and duplicate concurrent attempts
-  (excluding the one expected initial acceptance in each concurrent batch).
+- Replay detection rate = detected serial replays plus detected concurrent
+  duplicates / (serial replay attempts + concurrent batch size minus one per
+  `jti`). A concurrent batch's first use is excluded from that denominator.
+- False acceptance rate = accepted serial replays plus concurrent acceptances
+  beyond the first per `jti` / the same replay-attempt denominator.
 - Legitimate acceptance rate = accepted legitimate first-use/performance
-  requests / legitimate requests.
-- False acceptance/rejection rates use replay attempts / legitimate requests,
-  respectively, as their denominators.
+  requests / observed legitimate first-use/performance requests.
+- False rejection rate = non-accepted legitimate first-use/performance
+  requests / observed legitimate first-use/performance requests. Store and
+  service errors remain separately reported.
+- Cross-replica detection = detected replay requests routed to a different
+  observed replica / observed cross-replica replay requests. It is not
+  applicable to one-replica scenarios.
 - Latency is runner-observed end-to-end HTTP latency; store latency is separately
   measured inside Order Service around `consume()`.
-- Throughput is calculated per recorded performance window; setup and
-  warm-up requests are not observations.
+- Throughput = completed performance requests / wall-clock span of observed
+  performance request timestamps; setup and warm-up are excluded.
+- Protected-operation execution count includes only requests for which the
+  Order Service handler returned explicit execution evidence.
 - All methods use the same local machine, JWT rules, route, payload, and
   configured request counts. The local controlled testbed is not a production
   benchmark. Results depend on host load, Redis configuration, network stack,

@@ -1,0 +1,12 @@
+{
+  "experiment_id": "replay-2026-11-12T20-07-49-144Z-27c207ed",
+  "valid": false,
+  "scenario_rows": 12,
+  "valid_scenarios": 11,
+  "invalid_scenarios": 1,
+  "comparison_generated": false,
+  "failures": [
+    "comparison plots omitted because the complete 12-configuration run is not valid",
+    "metadata request count is incomplete"
+  ]
+}

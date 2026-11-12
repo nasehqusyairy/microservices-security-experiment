@@ -2,18 +2,19 @@ const fs = require("fs");
 const path = require("path");
 
 const REQUEST_COLUMNS = [
-  "experiment_id", "scenario_id", "repetition", "method", "replica_count", "phase",
-  "request_id", "jti_hash", "replica_id", "sequence_number", "concurrency_level",
+  "experiment_id", "scenario_id", "repetition", "method", "replay_store", "replica_count", "phase",
+  "request_type", "request_id", "jti_hash", "requested_replica_id", "replica_id", "routing_correct",
+  "sequence_number", "concurrency_level", "concurrent_batch_id", "timestamp",
   "request_start_timestamp", "request_end_timestamp", "latency_ms", "http_status",
-  "expected_outcome", "actual_outcome", "outcome_correct", "replay_detected",
+  "status", "expected_outcome", "actual_outcome", "outcome_correct", "replay_detected",
   "legitimate_request", "store_operation", "store_latency_ms", "store_ttl_ms", "replay_context",
-  "error_category", "error_message"
+  "protected_operation_executed", "error_category", "error_message"
 ];
 const SCENARIO_COLUMNS = [
   "experiment_id", "scenario_id", "method", "replica_count", "repetition",
   "planned_requests", "completed_requests", "accepted_requests", "rejected_requests",
   "replay_attempts", "replay_blocked", "legitimate_requests", "legitimate_accepted",
-  "error_count", "status", "reason", "start_time", "end_time"
+  "protected_operation_execution_count", "error_count", "status", "reason", "start_time", "end_time"
 ];
 const SUMMARY_COLUMNS = [
   "experiment_id", "scenario_id", "method", "replica_count", "repetition",
@@ -21,8 +22,9 @@ const SUMMARY_COLUMNS = [
   "false_acceptance_rate", "replay_acceptance_count", "replay_rejection_count",
   "latency_mean_ms", "latency_median_ms", "latency_std_ms", "latency_p95_ms",
   "latency_p99_ms", "throughput_rps", "store_latency_mean_ms", "store_latency_p95_ms",
-  "cpu_usage", "memory_usage_mb", "store_error_count", "service_error_count",
-  "cross_replica_replay_detection_rate", "restart_state_retained"
+  "cpu_usage", "memory_usage_mb", "store_error_count", "request_error_count", "service_error_count",
+  "cross_replica_replay_detection_rate", "restart_state_retained",
+  "protected_operation_execution_count"
 ];
 
 function csvCell(value) {
@@ -123,9 +125,8 @@ function summarizeScenario({ experimentId, scenario, requests, restartStateRetai
     ? (Math.max(...performanceTimes) - Math.min(...performanceTimes)) / 1000
     : null;
   const storeErrors = requests.filter((request) => request.error_category === "store_error").length;
-  const serviceErrors = requests.filter((request) =>
-    request.error_category === "service_error" || request.error_category === "request_error"
-  ).length;
+  const requestErrors = requests.filter((request) => request.error_category === "request_error").length;
+  const serviceErrors = requests.filter((request) => request.error_category === "service_error").length;
 
   return {
     experiment_id: experimentId,
@@ -153,11 +154,15 @@ function summarizeScenario({ experimentId, scenario, requests, restartStateRetai
     cpu_usage: null,
     memory_usage_mb: null,
     store_error_count: storeErrors,
+    request_error_count: requestErrors,
     service_error_count: serviceErrors,
     cross_replica_replay_detection_rate: scenario.replica_count > 1
       ? rate(crossReplicaBlocked, crossReplicaReplayRows.length)
       : null,
-    restart_state_retained: restartStateRetained
+    restart_state_retained: restartStateRetained,
+    protected_operation_execution_count: requests.filter(
+      (request) => request.protected_operation_executed === true
+    ).length
   };
 }
 

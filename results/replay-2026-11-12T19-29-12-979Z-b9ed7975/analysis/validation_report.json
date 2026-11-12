@@ -1,0 +1,13 @@
+{
+  "experiment_id": "replay-2026-11-12T19-29-12-979Z-b9ed7975",
+  "valid": false,
+  "scenario_rows": 36,
+  "valid_scenarios": 0,
+  "invalid_scenarios": 36,
+  "comparison_generated": false,
+  "failures": [
+    "comparison plots omitted because the complete 12-configuration run is not valid",
+    "metadata request count is incomplete",
+    "one or more shared replay-store dependencies were unavailable"
+  ]
+}
