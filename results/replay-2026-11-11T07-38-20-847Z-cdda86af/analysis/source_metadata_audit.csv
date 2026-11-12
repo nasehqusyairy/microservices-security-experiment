@@ -1,0 +1,5 @@
+item,metadata_description,source_evidence,status
+In-memory storage key,Process-local Set keyed by SHA-256(jti); state is lost on service restart.,InMemoryReplayStore.consume(jti) checks usedJtis.has(jti) and adds jti directly.,REVIEW — metadata wording is inaccurate
+Redis storage key,"Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",RedisReplayStore.keyFor(jti) computes SHA-256(jti) before constructing the Redis key.,CONSISTENT
+Redis TTL,"Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",RedisTtlReplayStore uses SET NX PX with remaining lifetime derived from exp.,CONSISTENT
+Middleware input,Not specified in metadata.,"Middleware calls replayStore.consume(decoded.jti, decoded.exp).",CONFIRMED

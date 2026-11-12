@@ -1,0 +1,4 @@
+scenario_id,method,replica_count,attempts,target_replicas,blocked,accepted,cross_replica_detection_rate
+S4,in-memory,2,3,['order-2'],0,3,0.0
+S5,redis,2,3,['order-2'],3,0,1.0
+S6,redis-ttl,2,3,['order-2'],3,0,1.0

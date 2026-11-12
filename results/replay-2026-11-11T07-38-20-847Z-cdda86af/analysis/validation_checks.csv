@@ -1,0 +1,18 @@
+check,status,detail
+Required experiment files,PASS,All required files exist
+Request count matches metadata,PASS,requests.csv=10170; metadata=10170
+Scenario count,PASS,18 scenario-repetition rows; 6 unique scenarios
+No duplicate request IDs,PASS,duplicate IDs=0
+Critical request fields populated,PASS,missing values=0
+All scenario repetitions completed,PASS,statuses={'completed': 18}
+No store/service errors,PASS,scenario error_count total=0
+Security rates reproduce summary.csv,PASS,maximum absolute difference=0
+Concurrent batches match topology behavior,PASS,54/54 batches match
+Cross-replica requests reached order-2,PASS,"target replica sets=[['order-2'], ['order-2'], ['order-2']]"
+Redis methods block all cross-replica replays,PASS,Redis and Redis+TTL detection rates are 100% in the recorded cross-replica attempts
+Restart behavior matches storage model,PASS,In-memory loses process-local state; Redis-backed state remains available after Order Service restart
+Restart events recorded,PASS,service_restarted events=18; expected one per scenario repetition
+In-memory cleanup behavior documented,PASS,server-secure.js clears the In-memory Set periodically only when experimentMode is false; experiment runs set EXPERIMENT_MODE=true.
+Store-key implementation inspected,PASS,In-memory stores raw jti=True; Redis hashes jti=True
+Latency and store-latency metrics reproduce summary.csv,PASS,maximum absolute difference=3.55e-14 ms
+Overall performance throughput reproduces summary.csv,PASS,maximum absolute difference=6.8e-05 requests/s; small timestamp precision differences may occur
