@@ -9,7 +9,7 @@ const {
   InMemoryReplayStore,
   RedisReplayStore,
   RedisTtlReplayStore,
-  MariaDBReplayStore
+  MySQLReplayStore
 } = require("../replay-stores");
 const { createReplayMiddleware } = require("../replay-auth");
 const {
@@ -118,7 +118,7 @@ test("Redis TTL uses remaining JWT lifetime and expires the replay key", async (
   assert.equal(key.startsWith("ttl:"), true);
 });
 
-test("MariaDB replay store claims a hashed jti with one atomic INSERT", async () => {
+test("MySQL replay store claims a hashed jti with one atomic INSERT", async () => {
   const statements = [];
   const pool = {
     async query(sql) {
@@ -130,7 +130,7 @@ test("MariaDB replay store claims a hashed jti with one atomic INSERT", async ()
       return {};
     }
   };
-  const store = new MariaDBReplayStore(pool);
+  const store = new MySQLReplayStore(pool);
   const result = await store.consume("database-jti", 123456);
   assert.equal(result.outcome, "accepted");
   assert.equal(statements.filter((statement) =>
@@ -144,8 +144,8 @@ test("MariaDB replay store claims a hashed jti with one atomic INSERT", async ()
   assert.equal(statements[1].values[1], 123456);
 });
 
-test("MariaDB duplicate keys are replays but other database errors are store errors", async () => {
-  const duplicateStore = new MariaDBReplayStore({
+test("MySQL duplicate keys are replays but other database errors are store errors", async () => {
+  const duplicateStore = new MySQLReplayStore({
     async query() { return []; },
     async execute() {
       const error = new Error("duplicate");
@@ -156,7 +156,7 @@ test("MariaDB duplicate keys are replays but other database errors are store err
   });
   assert.equal((await duplicateStore.consume("duplicate-jti", 1)).outcome, "replay_detected");
 
-  const failedStore = new MariaDBReplayStore({
+  const failedStore = new MySQLReplayStore({
     async query() { return []; },
     async execute() {
       const error = new Error("connection failed");
@@ -169,9 +169,9 @@ test("MariaDB duplicate keys are replays but other database errors are store err
   assert.equal(result.errorCategory, "ECONNREFUSED");
 });
 
-test("concurrent MariaDB insert claims accept exactly one duplicate jti", async () => {
+test("concurrent MySQL insert claims accept exactly one duplicate jti", async () => {
   const hashes = new Set();
-  const store = new MariaDBReplayStore({
+  const store = new MySQLReplayStore({
     async query() { return []; },
     async execute(_sql, [jtiHash]) {
       if (hashes.has(jtiHash)) {

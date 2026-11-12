@@ -1,3 +1,4 @@
+-- MySQL initialization for the isolated replay experiment database.
 CREATE DATABASE IF NOT EXISTS mse;
 CREATE USER IF NOT EXISTS 'mse_runner'@'%' IDENTIFIED BY '';
 ALTER USER 'mse_runner'@'%' IDENTIFIED BY '';

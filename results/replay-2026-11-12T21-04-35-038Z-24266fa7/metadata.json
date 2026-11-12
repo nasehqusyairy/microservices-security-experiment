@@ -1,0 +1,207 @@
+{
+  "experiment_id": "replay-2026-11-12T21-04-35-038Z-24266fa7",
+  "start_time": "2026-11-12T21:04:35.038584790Z",
+  "end_time": "2026-11-12T21:07:02.856268064Z",
+  "repository_commit": "e23767c05139b7fcbf389ceb08b7abb1c4dbfef5",
+  "node_version": "v24.15.0",
+  "operating_system": "Linux 7.0.0-43-generic (x64)",
+  "cpu": [
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 899
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 899
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 900
+    }
+  ],
+  "total_memory_bytes": 16055603200,
+  "redis_version": "7.4.12",
+  "redis_available": true,
+  "redis_preflight": {
+    "available": true,
+    "host": "127.0.0.1",
+    "port": 6379,
+    "version": "7.4.12",
+    "ping": true,
+    "atomic_set_nx": true,
+    "set_nx_without_ttl": true,
+    "set_nx_with_ttl": true,
+    "error": null
+  },
+  "mysql_version": "8.4.11-0ubuntu0.26.04.1",
+  "mysql_available": true,
+  "mysql_preflight": {
+    "available": true,
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "mse",
+    "user": "root",
+    "password_configured": false,
+    "version": "8.4.11-0ubuntu0.26.04.1",
+    "database_exists": true,
+    "table_engine": "InnoDB",
+    "jti_hash_primary_key": true,
+    "create_table": true,
+    "insert_select": true,
+    "privileges": {
+      "create": true,
+      "insert": true,
+      "select": true
+    },
+    "error": null
+  },
+  "configuration": {
+    "mode": "full",
+    "repetitions": 3,
+    "legitimate_requests_per_repetition": 100,
+    "replay_attempts_per_repetition": 100,
+    "concurrency_levels": [
+      1,
+      10,
+      50
+    ],
+    "token_lifetime_seconds": 300,
+    "redis_url": "redis://127.0.0.1:6379",
+    "database_client": "mysql2/promise",
+    "environment_files": [
+      ".env.example",
+      ".env"
+    ],
+    "mysql": {
+      "host": "127.0.0.1",
+      "port": 3306,
+      "database": "mse",
+      "user": "root"
+    },
+    "output_directory": "/home/nasyikhqusyairy/Projects/repositories/mse/results/replay-2026-11-12T21-04-35-038Z-24266fa7"
+  },
+  "methods": {
+    "in-memory": "Process-local Set keyed by raw jti; state is lost on service restart.",
+    "redis": "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
+    "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",
+    "mysql": "Shared MySQL InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
+  },
+  "token_semantics": "One-time-use service token: one jti can authorize at most one protected operation.",
+  "jwt_configuration": {
+    "issuer": "auth-service",
+    "audience": "order-service",
+    "subject": "order_service",
+    "algorithm": "HS256",
+    "token_lifetime_seconds": 300,
+    "secret_recorded": false
+  },
+  "scenarios": [
+    {
+      "scenario_id": "S1",
+      "method": "in-memory",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S2",
+      "method": "redis",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S3",
+      "method": "redis-ttl",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S4",
+      "method": "mysql",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S5",
+      "method": "in-memory",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S6",
+      "method": "redis",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S7",
+      "method": "redis-ttl",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S8",
+      "method": "mysql",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S9",
+      "method": "in-memory",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S10",
+      "method": "redis",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S11",
+      "method": "redis-ttl",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S12",
+      "method": "mysql",
+      "replica_count": 3
+    }
+  ],
+  "request_counts": {
+    "planned_measured_requests": 20352,
+    "completed_measured_requests": 20352
+  },
+  "request_schema_version": 2,
+  "measurement": {
+    "latency": "Runner-observed end-to-end HTTP latency using process.hrtime.bigint(); excludes token setup and health checks.",
+    "throughput": "Completed performance-phase requests divided by wall-clock span of recorded performance request start/end timestamps.",
+    "percentiles": "Linear interpolation between adjacent sorted observations; standard deviation uses sample formula (n-1).",
+    "store_latency": "Order Service's internal replay-store consume() duration, returned in an experiment-only response header.",
+    "protected_operation_execution": "True only when the protected /orders handler sets its explicit execution response header; false for known store rejections/errors and null when not observable.",
+    "resource_metrics": "CPU and process memory utilization were not sampled; summary columns remain empty."
+  },
+  "preflight": {
+    "passed": true,
+    "checked_at": "2026-11-12T21:04:35.038584790Z",
+    "errors": []
+  },
+  "errors": [],
+  "interrupted": false,
+  "scenario_counts": {
+    "planned": 36,
+    "completed": 36,
+    "partial": 0,
+    "failed": 0,
+    "not_run": 0
+  }
+}

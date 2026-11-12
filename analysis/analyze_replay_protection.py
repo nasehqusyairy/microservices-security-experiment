@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-METHODS = ("in-memory", "redis", "redis-ttl", "mariadb")
+METHODS = ("in-memory", "redis", "redis-ttl", "mysql")
 REPLICA_COUNTS = (1, 2, 3)
 GROUP_COLUMNS = ["scenario_id", "method", "replica_count", "repetition"]
 RATE_COLUMNS = (
@@ -334,7 +334,7 @@ def validate_run(metadata, requests, scenarios, summary):
         validation_rows.append({**planned, "valid": not reasons, "validation_errors": "; ".join(reasons)})
 
     all_valid = len(validation_rows) == len(expected) and all(row["valid"] for row in validation_rows)
-    if not metadata.get("redis_available") or not metadata.get("mariadb_available"):
+    if not metadata.get("redis_available") or not metadata.get("mysql_available"):
         failures.append("one or more shared replay-store dependencies were unavailable")
         all_valid = False
     planned_requests = metadata.get("request_counts", {}).get("planned_measured_requests")
@@ -382,7 +382,7 @@ def main():
     matrix_complete = len(derived) == len(expected_scenarios(
         int(metadata.get("configuration", {}).get("repetitions", 0))
     ))
-    dependencies_available = metadata.get("redis_available") and metadata.get("mariadb_available")
+    dependencies_available = metadata.get("redis_available") and metadata.get("mysql_available")
     comparison_generated = bool(all_valid and matrix_complete and dependencies_available)
     if comparison_generated:
         comparisons = derived.groupby(["method", "replica_count"], as_index=False)[list(COMPARE_COLUMNS)].mean(numeric_only=True)

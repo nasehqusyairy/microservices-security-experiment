@@ -52,7 +52,7 @@ class RedisTtlReplayStore extends RedisReplayStore {
   }
 }
 
-class MariaDBReplayStore {
+class MySQLReplayStore {
   constructor(pool, tableName = "consumed_tokens") {
     this.pool = pool;
     this.tableName = tableName;
@@ -98,5 +98,5 @@ module.exports = {
   InMemoryReplayStore,
   RedisReplayStore,
   RedisTtlReplayStore,
-  MariaDBReplayStore
+  MySQLReplayStore
 };

@@ -2,23 +2,22 @@
 # Run: docker-compose -f docker-compose.secure.yml up
 
 services:
-  mariadb:
-    image: mariadb:11.4
-    container_name: mse-mariadb
+  mysql:
+    image: mysql:8.4
+    container_name: mse-mysql
     restart: unless-stopped
     profiles:
       - legacy
     ports:
       - "127.0.0.1:3307:3306"
     environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-}
-      MARIADB_DATABASE: ${MARIADB_DATABASE:-mse}
-      MARIADB_USER: ${MARIADB_USER:-mse}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+      MYSQL_ALLOW_EMPTY_PASSWORD: ${MYSQL_ALLOW_EMPTY_PASSWORD:-yes}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mse}
     volumes:
-      - mariadb-data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p\"$${MARIADB_ROOT_PASSWORD}\""]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -26,20 +25,20 @@ services:
     networks:
       - microservices-net
 
-  mariadb-experiment:
-    image: mariadb:11.4
-    container_name: mse-mariadb-experiment
+  mysql-experiment:
+    image: mysql:8.4
+    container_name: mse-mysql-experiment
     restart: unless-stopped
     ports:
       - "127.0.0.1:3308:3306"
     environment:
-      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
-      MARIADB_DATABASE: mse
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: mse
     volumes:
-      - mariadb-experiment-data:/var/lib/mysql
-      - ./database/init-mariadb-compose.sql:/docker-entrypoint-initdb.d/10-replay-experiment.sql:ro
+      - mysql-experiment-data:/var/lib/mysql
+      - ./database/init-mysql-compose.sql:/docker-entrypoint-initdb.d/10-replay-experiment.sql:ro
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "--silent"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -67,9 +66,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - JWT_SECRET=UltraSecureSecret123!XYZ
-      - ORDER_SERVICE_SECRET=SecureOrderSecret!456
-      - NODE_ENV=production
+      JWT_SECRET: ${JWT_SECRET:-local-development-jwt-secret}
+      ORDER_SERVICE_SECRET: ${ORDER_SERVICE_SECRET:-local-development-order-secret}
+      NODE_ENV: ${NODE_ENV:-production}
     networks:
       - microservices-net
 
@@ -79,13 +78,15 @@ services:
     ports:
       - "4000:4000"
     environment:
-      - JWT_SECRET=UltraSecureSecret123!XYZ
-      - NODE_ENV=production
-      - MARIADB_HOST=mariadb-experiment
-      - MARIADB_PORT=3306
-      - MARIADB_DATABASE=${MARIADB_DATABASE:-mse}
-      - MARIADB_USER=mse_runner
-      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-local-development-jwt-secret}
+      NODE_ENV: ${NODE_ENV:-production}
+      MYSQL_HOST: mysql-experiment
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mse}
+      MYSQL_USER: mse_runner
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
+      MYSQL_CONNECT_TIMEOUT_MS: ${MYSQL_CONNECT_TIMEOUT_MS:-5000}
     volumes:
       - ./certs:/app/../certs:ro
     networks:
@@ -93,7 +94,7 @@ services:
     depends_on:
       auth-service:
         condition: service_started
-      mariadb-experiment:
+      mysql-experiment:
         condition: service_healthy
 
   gateway:
@@ -101,8 +102,8 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - JWT_SECRET=UltraSecureSecret123!XYZ
-      - NODE_ENV=production
+      JWT_SECRET: ${JWT_SECRET:-local-development-jwt-secret}
+      NODE_ENV: ${NODE_ENV:-production}
     networks:
       - microservices-net
     depends_on:
@@ -123,8 +124,8 @@ services:
       - gateway
 
 volumes:
-  mariadb-data:
-  mariadb-experiment-data:
+  mysql-data:
+  mysql-experiment-data:
 
 networks:
   microservices-net:

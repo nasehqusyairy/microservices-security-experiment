@@ -20,12 +20,11 @@ const fs = require("fs");
 const path = require("path");
 const { createClient } = require("redis");
 const mysql = require("mysql2/promise");
-const replayConfig = require("./replay-config");
 const {
   InMemoryReplayStore,
   RedisReplayStore,
   RedisTtlReplayStore,
-  MariaDBReplayStore
+  MySQLReplayStore
 } = require("./replay-stores");
 const { createReplayMiddleware } = require("./replay-auth");
 
@@ -43,7 +42,7 @@ const replayMethod = process.env.REPLAY_METHOD || "in-memory";
 const replayPrefix = process.env.REPLAY_KEY_PREFIX || "microservices:replay";
 let replayStore;
 let redisClient;
-let mariadbPool;
+let mysqlPool;
 
 if (replayMethod === "in-memory") {
   replayStore = new InMemoryReplayStore();
@@ -55,7 +54,7 @@ if (replayMethod === "in-memory") {
   }
 } else if (replayMethod === "redis" || replayMethod === "redis-ttl") {
   redisClient = createClient({
-    url: process.env.REDIS_URL || replayConfig.redis.url,
+    url: process.env.REDIS_URL || "redis://127.0.0.1:6379",
     socket: {
       connectTimeout: 2000,
       reconnectStrategy: () => false
@@ -71,16 +70,18 @@ if (replayMethod === "in-memory") {
   replayStore = replayMethod === "redis"
     ? new RedisReplayStore(redisClient, replayPrefix)
     : new RedisTtlReplayStore(redisClient, replayPrefix);
-} else if (replayMethod === "mariadb") {
-  mariadbPool = mysql.createPool({
-    ...replayConfig.mariadb,
-    host: process.env.MARIADB_HOST || replayConfig.mariadb.host,
-    port: Number(process.env.MARIADB_PORT || replayConfig.mariadb.port),
-    database: process.env.MARIADB_DATABASE || replayConfig.mariadb.database,
-    user: process.env.MARIADB_USER || replayConfig.mariadb.user,
-    password: process.env.MARIADB_PASSWORD ?? replayConfig.mariadb.password
+} else if (replayMethod === "mysql") {
+  mysqlPool = mysql.createPool({
+    host: process.env.MYSQL_HOST || "127.0.0.1",
+    port: Number(process.env.MYSQL_PORT || 3306),
+    database: process.env.MYSQL_DATABASE || "mse",
+    user: process.env.MYSQL_USER || "mse_runner",
+    password: process.env.MYSQL_PASSWORD || "",
+    connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 10),
+    connectTimeout: Number(process.env.MYSQL_CONNECT_TIMEOUT_MS || 5000),
+    multipleStatements: false
   });
-  replayStore = new MariaDBReplayStore(mariadbPool, "consumed_tokens");
+  replayStore = new MySQLReplayStore(mysqlPool, "consumed_tokens");
 } else {
   console.error(`[FATAL] Unsupported REPLAY_METHOD: ${replayMethod}`);
   process.exit(1);
@@ -143,7 +144,7 @@ if (!(fs.existsSync(orderKey) && fs.existsSync(orderPem) && fs.existsSync(caPem)
 
 async function start() {
   if (redisClient) await redisClient.connect();
-  if (mariadbPool) {
+  if (mysqlPool) {
     await replayStore.initialize();
   }
 
@@ -166,7 +167,7 @@ async function start() {
       server.close((error) => error ? reject(error) : resolve());
     });
     if (redisClient && redisClient.isOpen) await redisClient.quit();
-    if (mariadbPool) await mariadbPool.end();
+    if (mysqlPool) await mysqlPool.end();
   };
   const handleShutdown = () => {
     shutdown().catch((error) => {

@@ -233,7 +233,7 @@ using `REPLAY_METHOD`:
 | `in-memory` | Process-local Set; atomically accepts a `jti` once, but replicas and restarts have independent/empty state. |
 | `redis` | Atomic Redis `SET NX`; shared across replicas and retained without expiry for the experiment. |
 | `redis-ttl` | Atomic Redis `SET NX PX`; entry TTL is the JWT's remaining lifetime. |
-| `mariadb` | Shared MariaDB InnoDB table accessed with the `mysql2/promise` driver, using atomic `INSERT ... VALUES (...)` on a SHA-256 `jti_hash` primary key; duplicate inserts are classified as replay detection and DB failures as `store_error`. |
+| `mysql` | Shared MySQL InnoDB table accessed with the `mysql2/promise` driver, using atomic `INSERT ... VALUES (...)` on a SHA-256 `jti_hash` primary key; duplicate inserts are classified as replay detection and DB failures as `store_error`. |
 
 JWT signature, issuer, audience, service identity, expiry, and `jti` validation
 are the same for all methods and happen before replay-store lookup. Redis
@@ -250,15 +250,15 @@ the `jti`. The experimental token-provisioning route is available only when
 | S1 | in-memory | 1 |
 | S2 | redis | 1 |
 | S3 | redis-ttl | 1 |
-| S4 | mariadb | 1 |
+| S4 | mysql | 1 |
 | S5 | in-memory | 2 |
 | S6 | redis | 2 |
 | S7 | redis-ttl | 2 |
-| S8 | mariadb | 2 |
+| S8 | mysql | 2 |
 | S9 | in-memory | 3 |
 | S10 | redis | 3 |
 | S11 | redis-ttl | 3 |
-| S12 | mariadb | 3 |
+| S12 | mysql | 3 |
 
 Each repetition starts clean Order Service processes and uses a unique Redis
 key prefix. Requests are routed by replica ID through an experiment-only
@@ -266,7 +266,7 @@ gateway selector and the actual receiving replica is logged and checked.
 Scenarios with two or three replicas include a first use and a replay at
 different replicas. Concurrent batches record request IDs and the requested
 and observed request distribution for every replica. In-memory concurrency is
-validated per replica; Redis and MariaDB concurrency is validated globally.
+validated per replica; Redis and MySQL concurrency is validated globally.
 Each run also measures replay state after restarting `order-1`.
 
 ### Run the experiment
@@ -278,25 +278,31 @@ npm run install:all
 npm run certs
 ```
 
-Start the shared experiment dependencies. The Compose file keeps the previous
-MariaDB volume intact and uses a dedicated experiment database on host port
-3308, avoiding collision with a locally installed database on port 3306:
+The root `.env.example` contains defaults for local services and the experiment.
+`run-local-demo-2.js` always loads these defaults, then applies any matching
+values from `.env` or the shell environment, so no JS database config file or
+manual environment exports are needed. Docker Compose also accepts the example
+file directly:
 
 ```bash
-docker compose -f docker-compose.secure.yml up -d mariadb-experiment redis
-docker compose -f docker-compose.secure.yml ps mariadb-experiment redis
+docker compose --env-file .env.example -f docker-compose.secure.yml up -d mysql-experiment redis
 ```
 
-For a native MariaDB installation instead, execute
-`database/init-replay-mariadb.sql` as the local root account, then set the
-host/port in [order-service/replay-config.js](./order-service/replay-config.js)
-to the native server (normally `127.0.0.1:3306`). The runner uses the `mysql2/promise` driver and this JS
-configuration for both preflight and Order Service connections; database
-credentials are not read from environment variables. The defaults use the
-requested local `root` account with an empty password, and preflight verifies
-that it accepts TCP and has the required privileges. If the local root account
-is socket-only, change the configured user to `mse_runner`; the SQL script
-creates that account with only CREATE, INSERT, and SELECT privileges.
+Start the shared experiment dependencies. Compose runs MySQL 8.4 with a
+dedicated experiment database on host port 3308, avoiding collision with a
+locally installed MySQL server on port 3306:
+
+```bash
+docker compose --env-file .env.example -f docker-compose.secure.yml ps mysql-experiment redis
+```
+
+For a native MySQL installation, execute `database/init-replay-mysql.sql` as
+the local root account. The runner uses the `mysql2/promise` driver and
+the root environment file for preflight and experiment connections. The
+defaults target native MySQL at `127.0.0.1:3306` with the `mse_runner` account
+and empty password created by the SQL setup script. To run the local runner
+against the Compose database instead, set `MYSQL_PORT=3308` in the root
+environment file. Preflight verifies TCP access and required privileges.
 
 Run the quick experiment (1 repetition, 10 legitimate requests, 10 replay
 attempts, concurrency levels 1 and 5):
@@ -312,9 +318,8 @@ concurrency 1, 10, and 50):
 node run-local-demo-2.js --mode full
 ```
 
-Experiment counts can be configured with CLI flags or their existing
-`EXPERIMENT_*` variables. Redis can be overridden with `--redis-url`;
-MariaDB/Redis defaults live in `order-service/replay-config.js`.
+Experiment counts can be configured with CLI flags or their `EXPERIMENT_*`
+variables. Redis and MySQL defaults are read from the root environment file.
 
 ```bash
 node run-local-demo-2.js --mode quick --repetitions 2 --requests 20 \
@@ -326,7 +331,7 @@ Supported experiment environment variables include `EXPERIMENT_REPETITIONS`,
 `EXPERIMENT_REQUESTS`, `EXPERIMENT_REPLAYS`, `EXPERIMENT_CONCURRENCY`,
 `EXPERIMENT_OUTPUT_DIR`, `EXPERIMENT_TOKEN_TTL_SECONDS`, and `CERTS_DIR`.
 Before any scenario starts, preflight checks Redis `PING`, atomic `SET NX`
-with and without TTL, and MariaDB TCP connection, version, database,
+with and without TTL, and MySQL TCP connection, version, database,
 privileges, InnoDB engine, primary key, and transactional INSERT/SELECT.
 Failures include a sanitized reason in `metadata.json`, stop the run, create
 no scenario results, and return a non-zero exit code. Partial scenarios never

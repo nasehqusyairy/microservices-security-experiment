@@ -4,14 +4,27 @@ const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
 const { createRequire } = require("module");
 const fs = require("fs");
+const path = require("path");
+const dotenv = require("dotenv");
+const shellEnvironment = { ...process.env };
+const exampleEnvPath = path.join(__dirname, ".env.example");
+const localEnvPath = path.join(__dirname, ".env");
+const exampleEnvironment = dotenv.parse(fs.readFileSync(exampleEnvPath));
+const localEnvironment = fs.existsSync(localEnvPath)
+  ? dotenv.parse(fs.readFileSync(localEnvPath))
+  : {};
+for (const [key, value] of Object.entries(exampleEnvironment)) {
+  if (shellEnvironment[key] === undefined) process.env[key] = value;
+}
+for (const [key, value] of Object.entries(localEnvironment)) {
+  if (shellEnvironment[key] === undefined) process.env[key] = value;
+}
 const http = require("http");
 const https = require("https");
 const os = require("os");
-const path = require("path");
 const net = require("net");
 const tls = require("tls");
 const jwt = require(path.join(__dirname, "auth-service/node_modules/jsonwebtoken"));
-const replayConfig = require("./order-service/replay-config");
 const {
   createExperimentFiles,
   summarizeScenario
@@ -19,19 +32,28 @@ const {
 
 const ROOT = __dirname;
 const orderServiceRequire = createRequire(path.join(ROOT, "order-service/package.json"));
+const mysqlConfig = {
+  host: process.env.MYSQL_HOST || "127.0.0.1",
+  port: Number(process.env.MYSQL_PORT || 3306),
+  database: process.env.MYSQL_DATABASE || "mse",
+  user: process.env.MYSQL_USER || "mse_runner",
+  password: process.env.MYSQL_PASSWORD || "",
+  connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 10),
+  connectTimeout: Number(process.env.MYSQL_CONNECT_TIMEOUT_MS || 5000)
+};
 const SCENARIOS = [
   { scenario_id: "S1", method: "in-memory", replica_count: 1 },
   { scenario_id: "S2", method: "redis", replica_count: 1 },
   { scenario_id: "S3", method: "redis-ttl", replica_count: 1 },
-  { scenario_id: "S4", method: "mariadb", replica_count: 1 },
+  { scenario_id: "S4", method: "mysql", replica_count: 1 },
   { scenario_id: "S5", method: "in-memory", replica_count: 2 },
   { scenario_id: "S6", method: "redis", replica_count: 2 },
   { scenario_id: "S7", method: "redis-ttl", replica_count: 2 },
-  { scenario_id: "S8", method: "mariadb", replica_count: 2 },
+  { scenario_id: "S8", method: "mysql", replica_count: 2 },
   { scenario_id: "S9", method: "in-memory", replica_count: 3 },
   { scenario_id: "S10", method: "redis", replica_count: 3 },
   { scenario_id: "S11", method: "redis-ttl", replica_count: 3 },
-  { scenario_id: "S12", method: "mariadb", replica_count: 3 }
+  { scenario_id: "S12", method: "mysql", replica_count: 3 }
 ];
 const ORDERS_PATH = "/orders";
 let activeProcesses = new Set();
@@ -86,7 +108,7 @@ function parseOptions(argv) {
     replayCount: parseInteger(values.replays || process.env.EXPERIMENT_REPLAYS || (isFull ? 100 : 10), "replays", 1, 10000),
     concurrencyLevels: [...new Set(concurrencyLevels)],
     output: path.resolve(values.output || process.env.EXPERIMENT_OUTPUT_DIR || path.join(ROOT, "results")),
-    redisUrl: values["redis-url"] || replayConfig.redis.url,
+    redisUrl: values["redis-url"] || process.env.REDIS_URL || "redis://127.0.0.1:6379",
     tokenTtlSeconds: parseInteger(process.env.EXPERIMENT_TOKEN_TTL_SECONDS || 300, "token TTL", 30, 3600)
   };
 }
@@ -271,7 +293,7 @@ async function checkRedis(redisUrl) {
   return status;
 }
 
-async function checkMariaDB(config) {
+async function checkMySQL(config) {
   const status = {
     available: false,
     host: config.host,
@@ -295,8 +317,9 @@ async function checkMariaDB(config) {
     const [versionRows] = await connection.query("SELECT VERSION() AS version, DATABASE() AS database_name");
     status.version = versionRows[0].version;
     status.database_exists = versionRows[0].database_name === config.database;
-    if (!/mariadb/i.test(status.version)) {
-      throw new Error(`Connected server is not MariaDB (reported ${status.version})`);
+    const majorVersion = Number(status.version.match(/^(\d+)\./)?.[1]);
+    if (!Number.isInteger(majorVersion) || majorVersion < 8 || majorVersion >= 10) {
+      throw new Error(`MySQL 8.x or 9.x is required (reported ${status.version})`);
     }
     if (!status.database_exists) throw new Error(`Connected database does not match ${config.database}`);
     const [grants] = await connection.query("SHOW GRANTS");
@@ -355,7 +378,7 @@ async function checkMariaDB(config) {
         [probeHash]
       );
       if (rows.length !== 1 || rows[0].jti_hash !== probeHash) {
-        throw new Error("MariaDB INSERT/SELECT replay-store probe returned unexpected data");
+        throw new Error("MySQL INSERT/SELECT replay-store probe returned unexpected data");
       }
       await connection.rollback();
       status.insert_select = true;
@@ -372,7 +395,7 @@ async function checkMariaDB(config) {
         await connection.end();
       } catch (error) {
         status.available = false;
-        status.error = `MariaDB connection cleanup failed: ${safeDiagnostic(error, [config.password])}`;
+        status.error = `MySQL connection cleanup failed: ${safeDiagnostic(error, [config.password])}`;
       }
     }
   }
@@ -1041,13 +1064,13 @@ async function main() {
     set_nx_with_ttl: false,
     error: "Redis client dependency is missing"
   };
-  let mariadbStatus = {
+  let mysqlStatus = {
     available: false,
-    host: replayConfig.mariadb.host,
-    port: replayConfig.mariadb.port,
-    database: replayConfig.mariadb.database,
-    user: replayConfig.mariadb.user,
-    password_configured: Boolean(replayConfig.mariadb.password),
+    host: mysqlConfig.host,
+    port: mysqlConfig.port,
+    database: mysqlConfig.database,
+    user: mysqlConfig.user,
+    password_configured: Boolean(mysqlConfig.password),
     version: null,
     database_exists: false,
     table_engine: null,
@@ -1055,18 +1078,18 @@ async function main() {
     create_table: false,
     insert_select: false,
     privileges: { create: false, insert: false, select: false },
-    error: "MariaDB client dependency is missing"
+    error: "MySQL client dependency is missing"
   };
   if (!missingDependencies.includes("order-service redis client")) {
     redisStatus = await checkRedis(config.redisUrl);
   }
   if (!missingDependencies.includes("order-service mysql2 client")) {
-    mariadbStatus = await checkMariaDB(replayConfig.mariadb);
+    mysqlStatus = await checkMySQL(mysqlConfig);
   }
   if (missingDependencies.length) errors.push(`Missing dependencies: ${missingDependencies.join(", ")}`);
   if (certificateStatus.error) errors.push(certificateStatus.error);
   if (!redisStatus.available) errors.push(`Redis preflight failed: ${redisStatus.error}`);
-  if (!mariadbStatus.available) errors.push(`MariaDB preflight failed: ${mariadbStatus.error}`);
+  if (!mysqlStatus.available) errors.push(`MySQL preflight failed: ${mysqlStatus.error}`);
 
   const experimentSecret = crypto.randomBytes(32).toString("hex");
   const experimentKey = crypto.randomBytes(32).toString("hex");
@@ -1083,9 +1106,9 @@ async function main() {
     redis_version: redisStatus.version,
     redis_available: redisStatus.available,
     redis_preflight: redisStatus,
-    mariadb_version: mariadbStatus.version,
-    mariadb_available: mariadbStatus.available,
-    mariadb_preflight: mariadbStatus,
+    mysql_version: mysqlStatus.version,
+    mysql_available: mysqlStatus.available,
+    mysql_preflight: mysqlStatus,
     configuration: {
       mode: config.mode,
       repetitions: config.repetitions,
@@ -1095,12 +1118,15 @@ async function main() {
       token_lifetime_seconds: config.tokenTtlSeconds,
       redis_url: sanitizedRedisUrl(config.redisUrl),
       database_client: "mysql2/promise",
-      database_config_file: "order-service/replay-config.js",
-      mariadb: {
-        host: replayConfig.mariadb.host,
-        port: replayConfig.mariadb.port,
-        database: replayConfig.mariadb.database,
-        user: replayConfig.mariadb.user
+      environment_files: [
+        path.relative(ROOT, exampleEnvPath),
+        ...(fs.existsSync(localEnvPath) ? [path.relative(ROOT, localEnvPath)] : [])
+      ],
+      mysql: {
+        host: mysqlConfig.host,
+        port: mysqlConfig.port,
+        database: mysqlConfig.database,
+        user: mysqlConfig.user
       },
       output_directory: outputDir
     },
@@ -1108,7 +1134,7 @@ async function main() {
       "in-memory": "Process-local Set keyed by raw jti; state is lost on service restart.",
       redis: "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
       "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",
-      mariadb: "Shared MariaDB InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
+      mysql: "Shared MySQL InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
     },
     token_semantics: "One-time-use service token: one jti can authorize at most one protected operation.",
     jwt_configuration: {
@@ -1148,8 +1174,8 @@ async function main() {
   if (redisStatus.available) {
     activeFiles.event({ event: "redis_ready", redis_version: redisStatus.version });
   }
-  if (mariadbStatus.available) {
-    activeFiles.event({ event: "mariadb_ready", mariadb_version: mariadbStatus.version });
+  if (mysqlStatus.available) {
+    activeFiles.event({ event: "mysql_ready", mysql_version: mysqlStatus.version });
   }
   if (errors.length) {
     metadata.end_time = timestamp();
@@ -1161,7 +1187,7 @@ async function main() {
     console.error("Preflight failed; no experiment scenarios were run.");
     console.error(JSON.stringify({
       redis: redisStatus,
-      mariadb: { ...mariadbStatus, password_configured: mariadbStatus.password_configured }
+      mysql: { ...mysqlStatus, password_configured: mysqlStatus.password_configured }
     }, null, 2));
     console.error(`Preflight report: ${outputDir}`);
     process.exitCode = 1;
