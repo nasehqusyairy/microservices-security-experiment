@@ -30,12 +30,29 @@ function createReplayMiddleware({ jwtSecret, replayStore, experimentMode = false
       return res.status(403).send("Forbidden: invalid service identity or token claims");
     }
 
+    const orderServiceArrivalTimestamp = new Date().toISOString();
+    const orderServiceArrivalMonotonicNs = process.hrtime.bigint();
+    const replayStoreStartTimestamp = new Date().toISOString();
     const startedAt = process.hrtime.bigint();
+    if (experimentMode) {
+      req.experimentReplayTiming = {
+        orderServiceArrivalTimestamp,
+        orderServiceArrivalMonotonicNs: orderServiceArrivalMonotonicNs.toString(),
+        replayStoreStartTimestamp,
+        replayStoreStartMonotonicNs: startedAt.toString()
+      };
+      res.set("X-Experiment-Order-Service-Arrival-Timestamp", orderServiceArrivalTimestamp);
+      res.set("X-Experiment-Order-Service-Arrival-Monotonic-Ns", orderServiceArrivalMonotonicNs.toString());
+      res.set("X-Experiment-Replay-Store-Start-Timestamp", replayStoreStartTimestamp);
+      res.set("X-Experiment-Replay-Store-Start-Monotonic-Ns", startedAt.toString());
+    }
     let result;
     try {
       result = await replayStore.consume(decoded.jti, decoded.exp);
     } catch (error) {
-      const storeLatencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      const replayStoreEndTimestamp = new Date().toISOString();
+      const replayStoreEndMonotonicNs = process.hrtime.bigint();
+      const storeLatencyMs = Number(replayStoreEndMonotonicNs - startedAt) / 1e6;
       console.error(JSON.stringify({
         event: "replay_store_error",
         category: "replay_store_unavailable",
@@ -45,14 +62,20 @@ function createReplayMiddleware({ jwtSecret, replayStore, experimentMode = false
         res.set("X-Experiment-Store-Result", "store_error");
         res.set("X-Experiment-Store-Latency-Ms", String(storeLatencyMs));
         res.set("X-Experiment-Protected-Operation-Executed", "false");
+        res.set("X-Experiment-Replay-Store-End-Timestamp", replayStoreEndTimestamp);
+        res.set("X-Experiment-Replay-Store-End-Monotonic-Ns", replayStoreEndMonotonicNs.toString());
       }
       return res.status(503).send("Replay protection unavailable");
     }
 
-    const storeLatencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const replayStoreEndTimestamp = new Date().toISOString();
+    const replayStoreEndMonotonicNs = process.hrtime.bigint();
+    const storeLatencyMs = Number(replayStoreEndMonotonicNs - startedAt) / 1e6;
     if (experimentMode) {
       res.set("X-Experiment-Store-Result", result.outcome);
       res.set("X-Experiment-Store-Latency-Ms", String(storeLatencyMs));
+      res.set("X-Experiment-Replay-Store-End-Timestamp", replayStoreEndTimestamp);
+      res.set("X-Experiment-Replay-Store-End-Monotonic-Ns", replayStoreEndMonotonicNs.toString());
       if (result.ttlMs !== undefined) {
         res.set("X-Experiment-Store-Ttl-Ms", String(result.ttlMs));
       }

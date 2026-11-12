@@ -1,0 +1,13 @@
+scenario_id,method,replica_count,repetition,valid,validation_errors
+S1,in-memory,1,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S2,redis,1,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S3,redis-ttl,1,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S4,mysql,1,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S5,in-memory,2,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S6,redis,2,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S7,redis-ttl,2,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S8,mysql,2,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S9,in-memory,3,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S10,redis,3,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S11,redis-ttl,3,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns
+S12,mysql,3,1,False,concurrent batch is missing gateway_arrival_monotonic_ns; concurrent batch is missing gateway_arrival_monotonic_ns

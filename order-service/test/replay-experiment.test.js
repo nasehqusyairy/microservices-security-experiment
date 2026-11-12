@@ -12,9 +12,11 @@ const {
   MySQLReplayStore
 } = require("../replay-stores");
 const { createReplayMiddleware } = require("../replay-auth");
+const { createLaunchBarrier, parseConcurrencyLevels } = require("../../experiment-concurrency");
 const {
   REQUEST_COLUMNS,
   createExperimentFiles,
+  summarizeConcurrentBatch,
   summarizeScenario
 } = require("../../experiment-logging");
 
@@ -86,6 +88,78 @@ test("in-memory store accepts different identifiers and is process-local", async
   assert.equal((await replicaA.consume("jti-a")).outcome, "accepted");
   assert.equal((await replicaA.consume("jti-b")).outcome, "accepted");
   assert.equal((await replicaB.consume("jti-a")).outcome, "accepted");
+});
+
+test("in-memory consume is atomic under repeated high-concurrency calls in one process", async () => {
+  for (let repetition = 0; repetition < 25; repetition += 1) {
+    const store = new InMemoryReplayStore();
+    const results = await Promise.all(
+      Array.from({ length: 1000 }, () => store.consume(`stress-jti-${repetition}`))
+    );
+    assert.equal(results.filter((result) => result.outcome === "accepted").length, 1);
+    assert.equal(results.filter((result) => result.outcome === "replay_detected").length, 999);
+  }
+});
+
+test("independent in-memory replicas each accept once and violate global one-time use", async () => {
+  const replicas = [new InMemoryReplayStore(), new InMemoryReplayStore(), new InMemoryReplayStore()];
+  const results = await Promise.all(replicas.map((store) =>
+    Promise.all(Array.from({ length: 100 }, () => store.consume("same-global-jti")))
+  ));
+  assert.deepEqual(
+    results.map((replicaResults) =>
+      replicaResults.filter((result) => result.outcome === "accepted").length
+    ),
+    [1, 1, 1]
+  );
+  const batch = summarizeConcurrentBatch(
+    results.flatMap((replicaResults, replicaIndex) => {
+      const replicaId = `order-${replicaIndex + 1}`;
+      const accepted = replicaResults.find((result) => result.outcome === "accepted");
+      return [
+        {
+          requested_replica_id: replicaId,
+          replica_id: replicaId,
+          actual_outcome: accepted.outcome,
+          protected_operation_executed: true,
+          order_service_arrival_monotonic_ns: String(1000 + replicaIndex * 1_000_000)
+        },
+        ...replicaResults
+          .filter((result) => result.outcome === "replay_detected")
+          .map(() => ({
+            requested_replica_id: replicaId,
+            replica_id: replicaId,
+            actual_outcome: "replay_detected",
+            protected_operation_executed: false,
+            order_service_arrival_monotonic_ns: String(1000 + replicaIndex * 1_000_000)
+          }))
+      ];
+    }),
+    "in-memory",
+    3
+  );
+  assert.equal(batch.local_process_atomicity_compliant, true);
+  assert.equal(batch.global_one_time_use_compliant, false);
+  assert.equal(batch.global_excess_executions, 2);
+  assert.equal(batch.distinct_replicas_executed, 3);
+});
+
+test("launch barrier waits until every prepared request is ready", async () => {
+  const barrier = createLaunchBarrier(3);
+  let released = false;
+  const participants = Array.from({ length: 3 }, async () => {
+    await barrier.wait();
+    released = true;
+  });
+  await Promise.all(participants);
+  assert.equal(released, true);
+});
+
+test("concurrency levels validate, deduplicate in order, and preserve mode defaults", () => {
+  assert.deepEqual(parseConcurrencyLevels("1,5,10,5,25,50", [1]), [1, 5, 10, 25, 50]);
+  assert.deepEqual(parseConcurrencyLevels("", [1, 5]), [1, 5]);
+  assert.throws(() => parseConcurrencyLevels("1,0,5", []), /integers from 1 to 1000/);
+  assert.throws(() => parseConcurrencyLevels("1,1.5", []), /integers from 1 to 1000/);
 });
 
 test("Redis store atomically accepts a jti once across replicas", async () => {

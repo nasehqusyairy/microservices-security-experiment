@@ -1,0 +1,9 @@
+{
+  "experiment_id": "replay-2026-11-12T22-22-25-272Z-4b8f7560",
+  "valid": true,
+  "scenario_rows": 36,
+  "valid_scenarios": 36,
+  "invalid_scenarios": 0,
+  "comparison_generated": true,
+  "failures": []
+}

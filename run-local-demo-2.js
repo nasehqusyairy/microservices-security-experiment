@@ -27,8 +27,10 @@ const tls = require("tls");
 const jwt = require(path.join(__dirname, "auth-service/node_modules/jsonwebtoken"));
 const {
   createExperimentFiles,
+  summarizeConcurrentBatch,
   summarizeScenario
 } = require("./experiment-logging");
+const { createLaunchBarrier, parseConcurrencyLevels } = require("./experiment-concurrency");
 
 const ROOT = __dirname;
 const orderServiceRequire = createRequire(path.join(ROOT, "order-service/package.json"));
@@ -97,16 +99,17 @@ function parseOptions(argv) {
   if (!["quick", "full"].includes(mode)) throw new Error("--mode must be quick or full");
   const isFull = mode === "full";
   const concurrencyInput = values.concurrency || process.env.EXPERIMENT_CONCURRENCY;
-  const concurrencyLevels = concurrencyInput
-    ? concurrencyInput.split(",").map((value) => parseInteger(value, "concurrency", 1, 1000))
-    : isFull ? [1, 10, 50] : [1, 5];
+  const concurrencyLevels = parseConcurrencyLevels(
+    concurrencyInput,
+    isFull ? [1, 5, 10, 25, 50] : [1, 5]
+  );
 
   return {
     mode,
     repetitions: parseInteger(values.repetitions || process.env.EXPERIMENT_REPETITIONS || (isFull ? 3 : 1), "repetitions", 1, 100),
     requestCount: parseInteger(values.requests || process.env.EXPERIMENT_REQUESTS || (isFull ? 100 : 10), "requests", 1, 10000),
     replayCount: parseInteger(values.replays || process.env.EXPERIMENT_REPLAYS || (isFull ? 100 : 10), "replays", 1, 10000),
-    concurrencyLevels: [...new Set(concurrencyLevels)],
+    concurrencyLevels,
     output: path.resolve(values.output || process.env.EXPERIMENT_OUTPUT_DIR || path.join(ROOT, "results")),
     redisUrl: values["redis-url"] || process.env.REDIS_URL || "redis://127.0.0.1:6379",
     tokenTtlSeconds: parseInteger(process.env.EXPERIMENT_TOKEN_TTL_SECONDS || 300, "token TTL", 30, 3600)
@@ -421,11 +424,30 @@ function spawnService(name, cwd, script, env) {
   });
   child.experimentName = name;
   child.stderrTail = "";
+  child.stdoutBuffer = "";
   const captureStderr = (chunk) => {
     child.stderrTail = `${child.stderrTail}${chunk.toString("utf8")}`.slice(-4000);
   };
   child.stderr.on("data", captureStderr);
-  child.stdout.on("data", () => {});
+  child.stdout.on("data", (chunk) => {
+    child.stdoutBuffer += chunk.toString("utf8");
+    const lines = child.stdoutBuffer.split("\n");
+    child.stdoutBuffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("EXPERIMENT_EVENT ")) continue;
+      try {
+        const event = JSON.parse(line.slice("EXPERIMENT_EVENT ".length));
+        if (event.event === "protected_operation_executed") {
+          appendEvent(event.event, { ...event, service: name });
+        }
+      } catch (error) {
+        appendEvent("experiment_event_parse_error", {
+          service: name,
+          message: safeDiagnostic(error)
+        });
+      }
+    }
+  });
   child.once("exit", (code, signal) => {
     activeProcesses.delete(child);
     appendEvent("service_process_exit", { service: name, exit_code: code, signal });
@@ -457,7 +479,7 @@ async function cleanup() {
   await Promise.all([...activeProcesses].map(stopService));
 }
 
-function request(options, body) {
+function request(options, body, launch = {}) {
   return new Promise((resolve, reject) => {
     const transport = options.protocol === "https:" ? https : http;
     const request = transport.request(options, (response) => {
@@ -471,8 +493,15 @@ function request(options, body) {
     });
     request.setTimeout(5000, () => request.destroy(new Error("request_timeout")));
     request.once("error", reject);
-    if (body !== undefined) request.write(body);
-    request.end();
+    const send = async () => {
+      if (launch.barrier) await launch.barrier.wait();
+      if (launch.onLaunch) {
+        launch.onLaunch({ timestamp: timestamp(), monotonicNs: process.hrtime.bigint().toString() });
+      }
+      if (body !== undefined) request.write(body);
+      request.end();
+    };
+    send().catch((error) => request.destroy(error));
   });
 }
 
@@ -563,8 +592,8 @@ async function measuredRequest(context) {
     throw new Error(`Token expired before ${context.phase} request could be measured`);
   }
   const requestId = crypto.randomUUID();
-  const startTimestamp = timestamp();
-  const startNanos = process.hrtime.bigint();
+  let clientLaunchTimestamp = null;
+  let clientLaunchMonotonicNs = null;
   let response;
   let requestError;
   try {
@@ -576,7 +605,22 @@ async function measuredRequest(context) {
       headers: {
         authorization: `Bearer ${context.token.token}`,
         "x-experiment-replica": context.replicaId,
-        "x-request-id": requestId
+        "x-request-id": requestId,
+        ...(context.concurrentBatchId ? {
+          "x-concurrent-batch-id": context.concurrentBatchId,
+          "x-experiment-jti-hash": context.token.jtiHash,
+          "x-experiment-concurrency-level": String(context.concurrencyLevel),
+          "x-experiment-scenario-id": context.scenario.scenario_id,
+          "x-experiment-method": context.scenario.method,
+          "x-experiment-replica-count": String(context.scenario.replica_count),
+          "x-experiment-repetition": String(context.repetition)
+        } : {})
+      }
+    }, undefined, {
+      barrier: context.launchBarrier,
+      onLaunch: ({ timestamp: launchedAt, monotonicNs }) => {
+        clientLaunchTimestamp = launchedAt;
+        clientLaunchMonotonicNs = monotonicNs;
       }
     });
   } catch (error) {
@@ -584,7 +628,9 @@ async function measuredRequest(context) {
   }
   const endNanos = process.hrtime.bigint();
   const endTimestamp = timestamp();
-  const latencyMs = Number(endNanos - startNanos) / 1e6;
+  const latencyMs = clientLaunchMonotonicNs === null
+    ? null
+    : Number(endNanos - BigInt(clientLaunchMonotonicNs)) / 1e6;
   const actualOutcome = requestError ? "request_error" : outcomeFrom(response);
   const header = (name) => response && response.headers[name];
   const actualReplicaId = header("x-experiment-replica") || null;
@@ -606,8 +652,18 @@ async function measuredRequest(context) {
     sequence_number: context.sequenceNumber,
     concurrency_level: context.concurrencyLevel || 1,
     concurrent_batch_id: context.concurrentBatchId || "",
-    timestamp: startTimestamp,
-    request_start_timestamp: startTimestamp,
+    timestamp: clientLaunchTimestamp || endTimestamp,
+    client_launch_timestamp: clientLaunchTimestamp,
+    client_launch_monotonic_ns: clientLaunchMonotonicNs,
+    gateway_arrival_timestamp: header("x-experiment-gateway-arrival-timestamp") || "",
+    gateway_arrival_monotonic_ns: header("x-experiment-gateway-arrival-monotonic-ns") || "",
+    order_service_arrival_timestamp: header("x-experiment-order-service-arrival-timestamp") || "",
+    order_service_arrival_monotonic_ns: header("x-experiment-order-service-arrival-monotonic-ns") || "",
+    replay_store_start_timestamp: header("x-experiment-replay-store-start-timestamp") || "",
+    replay_store_start_monotonic_ns: header("x-experiment-replay-store-start-monotonic-ns") || "",
+    replay_store_end_timestamp: header("x-experiment-replay-store-end-timestamp") || "",
+    replay_store_end_monotonic_ns: header("x-experiment-replay-store-end-monotonic-ns") || "",
+    request_start_timestamp: clientLaunchTimestamp || endTimestamp,
     request_end_timestamp: endTimestamp,
     latency_ms: latencyMs,
     http_status: response ? response.status : "",
@@ -651,10 +707,20 @@ function persistRequest(row) {
     scenario_id: row.scenario_id,
     phase: row.phase,
     request_id: row.request_id,
+    concurrent_batch_id: row.concurrent_batch_id,
+    jti_hash: row.jti_hash,
+    requested_replica_id: row.requested_replica_id,
     replica_id: row.replica_id,
     http_status: row.http_status || null,
     actual_outcome: row.actual_outcome,
-    latency_ms: row.latency_ms
+    latency_ms: row.latency_ms,
+    client_launch_timestamp: row.client_launch_timestamp,
+    client_launch_monotonic_ns: row.client_launch_monotonic_ns,
+    gateway_arrival_timestamp: row.gateway_arrival_timestamp,
+    gateway_arrival_monotonic_ns: row.gateway_arrival_monotonic_ns,
+    order_service_arrival_timestamp: row.order_service_arrival_timestamp,
+    order_service_arrival_monotonic_ns: row.order_service_arrival_monotonic_ns,
+    protected_operation_executed: row.protected_operation_executed
   });
 }
 
@@ -662,7 +728,7 @@ function plannedRequestCount(scenario, config) {
   return config.requestCount + config.replayCount +
     (scenario.replica_count > 1 ? 2 : 0) +
     config.concurrencyLevels.reduce((sum, level) => sum + level, 0) +
-    config.requestCount * config.concurrencyLevels.length + 3;
+    config.requestCount * config.concurrencyLevels.length + 4;
 }
 
 function replayAttemptCount(requests) {
@@ -769,6 +835,7 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       replicaId: "order-1", phase: "warmup", expectedOutcome: "accepted",
       sequenceNumber: 0, legitimateRequest: true
     });
+    record(warmup);
     if (warmup.actual_outcome !== "accepted") {
       throw new Error(`Warm-up request failed with HTTP ${warmup.http_status || "no response"}`);
     }
@@ -815,56 +882,66 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
     for (const concurrencyLevel of config.concurrencyLevels) {
       const concurrentToken = (await requestTokens(authPort, experimentKey, 1, "concurrent_replay"))[0];
       const concurrentBatchId = crypto.randomUUID();
-      const concurrentRows = await Promise.all(Array.from({ length: concurrencyLevel }, (_, index) =>
+      const launchBarrier = createLaunchBarrier(concurrencyLevel);
+      const concurrentRequests = Array.from({ length: concurrencyLevel }, (_, index) =>
         measuredRequest({
           experimentId, scenario, repetition, gatewayPort, token: concurrentToken,
           replicaId: targetReplica(index, scenario.replica_count),
           phase: "concurrent_replay",
-          expectedOutcome: scenario.method === "in-memory"
-            ? "one_acceptance_per_replica"
-            : "one_acceptance_per_jti",
+          expectedOutcome: "accepted_or_replay_detected",
           sequenceNumber: index + 1,
           concurrencyLevel,
           concurrentBatchId,
+          launchBarrier,
           legitimateRequest: false
         })
-      ));
+      );
+      const concurrentRows = await Promise.all(concurrentRequests);
       const acceptedByReplica = new Map();
       for (const row of concurrentRows.filter((item) => item.actual_outcome === "accepted")) {
         acceptedByReplica.set(row.replica_id, (acceptedByReplica.get(row.replica_id) || 0) + 1);
       }
       const observedReplicas = [...new Set(concurrentRows.map((row) => row.replica_id).filter(Boolean))].sort();
       const expectedObservedReplicas = [...new Set(concurrentRows.map((row) => row.requested_replica_id))].sort();
-      const sharedStateValid = concurrentRows.filter((row) => row.actual_outcome === "accepted").length === 1 &&
-        concurrentRows.every((row) => ["accepted", "replay_detected"].includes(row.actual_outcome));
-      const localStateValid = acceptedByReplica.size === expectedObservedReplicas.length &&
-        [...acceptedByReplica.values()].every((count) => count === 1) &&
-        concurrentRows.every((row) => ["accepted", "replay_detected"].includes(row.actual_outcome));
+      const responsesValid = concurrentRows.every((row) =>
+        ["accepted", "replay_detected"].includes(row.actual_outcome)
+      );
       const distributionValid = concurrentRows.every((row) => row.routing_correct === true) &&
+        expectedObservedReplicas.every((replicaId) => observedReplicas.includes(replicaId)) &&
         (concurrencyLevel < scenario.replica_count ||
           expectedObservedReplicas.every((replicaId) => observedReplicas.includes(replicaId)));
-      const validBatch = distributionValid &&
-        (scenario.method === "in-memory" ? localStateValid : sharedStateValid);
+      const localStateValid = [...acceptedByReplica.values()].every((count) => count <= 1) &&
+        expectedObservedReplicas.every((replicaId) => acceptedByReplica.get(replicaId) === 1);
+      const batchMetrics = summarizeConcurrentBatch(
+        concurrentRows,
+        scenario.method,
+        scenario.replica_count
+      );
       concurrentRows.forEach((row) => {
-        row.outcome_correct = validBatch;
+        row.outcome_correct = responsesValid;
         record(row);
       });
+      if (!distributionValid) scenarioErrors.push("concurrent_replica_distribution_mismatch");
+      if (!responsesValid) scenarioErrors.push("concurrent_request_execution_incomplete");
       appendEvent("concurrent_replay_distribution", {
         scenario_id: scenario.scenario_id,
         repetition,
-        batch_id: concurrentBatchId,
+        concurrent_batch_id: concurrentBatchId,
+        jti_hash: concurrentToken.jtiHash,
         concurrency_level: concurrencyLevel,
-        requested_replicas: concurrentRows.reduce((counts, row) => {
-          counts[row.requested_replica_id] = (counts[row.requested_replica_id] || 0) + 1;
-          return counts;
-        }, {}),
-        observed_replicas: concurrentRows.reduce((counts, row) => {
-          if (row.replica_id) counts[row.replica_id] = (counts[row.replica_id] || 0) + 1;
-          return counts;
-        }, {}),
-        invariant_valid: validBatch
+        ...batchMetrics,
+        expected_replicas: expectedObservedReplicas,
+        observed_replicas: observedReplicas,
+        replica_routing_valid: distributionValid,
+        local_process_atomicity_compliant: scenario.method === "in-memory"
+          ? localStateValid
+          : null,
+        shared_store_single_acceptance: scenario.method === "in-memory"
+          ? null
+          : batchMetrics.accepted_request_count === 1,
+        global_security_violation: !batchMetrics.global_one_time_use_compliant,
+        execution_available: batchMetrics.execution_available
       });
-      if (!validBatch) scenarioErrors.push("concurrent_replay_invariant_failed");
 
       for (let offset = 0; offset < config.requestCount; offset += concurrencyLevel) {
         const batchSize = Math.min(concurrencyLevel, config.requestCount - offset);
@@ -926,6 +1003,12 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
     const replayRows = requests.filter((row) =>
       row.phase === "replay" || row.phase === "concurrent_replay"
     );
+    const summary = summarizeScenario({
+      experimentId,
+      scenario: { ...scenario, repetition },
+      requests,
+      restartStateRetained
+    });
     const scenarioRow = {
       experiment_id: experimentId,
       scenario_id: scenario.scenario_id,
@@ -948,6 +1031,27 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
       protected_operation_execution_count: requests.filter(
         (row) => row.protected_operation_executed === true
       ).length,
+      concurrent_batch_count: summary.concurrent_batch_count,
+      global_invariant_violations: summary.global_invariant_violations,
+      global_excess_acceptances: summary.global_excess_acceptances,
+      global_excess_executions: summary.global_excess_executions,
+      global_one_time_use_compliant_batch_count: Math.round(
+        (summary.global_one_time_use_compliance_rate || 0) * summary.concurrent_batch_count
+      ),
+      execution_available_batch_count: Math.round(
+        (summary.global_execution_availability_rate || 0) * summary.concurrent_batch_count
+      ),
+      local_process_atomicity_violations: scenario.method === "in-memory"
+        ? summary.concurrent_batch_count - Math.round(
+          (summary.local_process_atomicity_compliance_rate || 0) * summary.concurrent_batch_count
+        )
+        : null,
+      concurrent_arrival_spread_mean_ms: summary.concurrent_arrival_spread_mean_ms,
+      planned_request_count_by_replica: summary.planned_request_count_by_replica,
+      received_request_count_by_replica: summary.received_request_count_by_replica,
+      accepted_count_by_replica: summary.accepted_count_by_replica,
+      replay_rejected_count_by_replica: summary.replay_rejected_count_by_replica,
+      protected_operation_count_by_replica: summary.protected_operation_count_by_replica,
       error_count: scenarioErrors.length,
       status: scenarioErrors.length || completed !== plannedRequestCount(scenario, config)
         ? "partial"
@@ -966,12 +1070,6 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
         message: [...new Set(scenarioErrors)].join("; ")
       });
     }
-    const summary = summarizeScenario({
-      experimentId,
-      scenario: { ...scenario, repetition },
-      requests,
-      restartStateRetained
-    });
     activeFiles.summary(summary);
     appendEvent("scenario_completed", {
       scenario_id: scenario.scenario_id,
@@ -1095,6 +1193,7 @@ async function main() {
   const experimentKey = crypto.randomBytes(32).toString("hex");
   process.env.__MSE_EXPERIMENT_JWT_SECRET = experimentSecret;
   const metadata = {
+    metadata_schema_version: 3,
     experiment_id: experimentId,
     start_time: startTime,
     end_time: null,
@@ -1111,10 +1210,12 @@ async function main() {
     mysql_preflight: mysqlStatus,
     configuration: {
       mode: config.mode,
+      execution_environment: "native-host-child-processes",
       repetitions: config.repetitions,
       legitimate_requests_per_repetition: config.requestCount,
       replay_attempts_per_repetition: config.replayCount,
       concurrency_levels: config.concurrencyLevels,
+      concurrency_distribution: "deterministic round-robin starting at order-1 for each batch",
       token_lifetime_seconds: config.tokenTtlSeconds,
       redis_url: sanitizedRedisUrl(config.redisUrl),
       database_client: "mysql2/promise",
@@ -1153,13 +1254,16 @@ async function main() {
       ),
       completed_measured_requests: 0
     },
-    request_schema_version: 2,
+    request_schema_version: 3,
     measurement: {
       latency: "Runner-observed end-to-end HTTP latency using process.hrtime.bigint(); excludes token setup and health checks.",
+      warmup: "One warm-up request per scenario is logged and included in request counts, but excluded from performance-phase metrics.",
       throughput: "Completed performance-phase requests divided by wall-clock span of recorded performance request start/end timestamps.",
       percentiles: "Linear interpolation between adjacent sorted observations; standard deviation uses sample formula (n-1).",
       store_latency: "Order Service's internal replay-store consume() duration, returned in an experiment-only response header.",
-      protected_operation_execution: "True only when the protected /orders handler sets its explicit execution response header; false for known store rejections/errors and null when not observable.",
+      arrival_spread: "Difference between the maximum and minimum Order Service CLOCK_MONOTONIC-equivalent process.hrtime.bigint() timestamps within one batch; comparable because all services run on the same host.",
+      protected_operation_execution: "Measured from an experiment-only handler response header and independently emitted execution event from the Order Service; unknown remains null when no evidence is observed.",
+      global_one_time_use: "At most one accepted HTTP outcome and at most one protected operation execution per concurrent batch and jti_hash. Zero executions are recorded as unavailable, not as a successful batch.",
       resource_metrics: "CPU and process memory utilization were not sampled; summary columns remain empty."
     },
     preflight: {

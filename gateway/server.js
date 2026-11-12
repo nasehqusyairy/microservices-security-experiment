@@ -82,6 +82,20 @@ if (experimentMode && process.env.ORDER_SERVICE_TARGETS) {
 }
 const defaultReplicaId = Object.keys(orderServiceTargets)[0];
 
+app.use((req, res, next) => {
+  if (experimentMode && req.path === "/orders") {
+    req.experimentGatewayArrival = {
+      timestamp: new Date().toISOString(),
+      monotonicNs: process.hrtime.bigint().toString()
+    };
+    req.headers["x-experiment-gateway-arrival-timestamp"] =
+      req.experimentGatewayArrival.timestamp;
+    req.headers["x-experiment-gateway-arrival-monotonic-ns"] =
+      req.experimentGatewayArrival.monotonicNs;
+  }
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // JWT verification middleware (application-layer authorization, separate
 // from the transport-layer identity established by mTLS above)

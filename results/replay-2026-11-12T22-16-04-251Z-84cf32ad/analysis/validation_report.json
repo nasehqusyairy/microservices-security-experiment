@@ -1,0 +1,11 @@
+{
+  "experiment_id": "replay-2026-11-12T22-16-04-251Z-84cf32ad",
+  "valid": false,
+  "scenario_rows": 12,
+  "valid_scenarios": 0,
+  "invalid_scenarios": 12,
+  "comparison_generated": false,
+  "failures": [
+    "comparison plots omitted because the complete 12-configuration run is not valid"
+  ]
+}

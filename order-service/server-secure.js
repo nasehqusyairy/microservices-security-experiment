@@ -18,6 +18,7 @@ const express = require("express");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { createClient } = require("redis");
 const mysql = require("mysql2/promise");
 const {
@@ -108,12 +109,41 @@ function verifyClientCertificate(req, res, next) {
 const verifyToken = createReplayMiddleware({ jwtSecret: JWT_SECRET, replayStore, experimentMode });
 
 app.use((req, res, next) => {
-  if (experimentMode) res.set("X-Experiment-Replica", process.env.REPLICA_ID || "order-1");
+  if (experimentMode) {
+    res.set("X-Experiment-Replica", process.env.REPLICA_ID || "order-1");
+    const gatewayArrivalTimestamp = req.get("x-experiment-gateway-arrival-timestamp");
+    const gatewayArrivalMonotonicNs = req.get("x-experiment-gateway-arrival-monotonic-ns");
+    if (gatewayArrivalTimestamp) {
+      res.set("X-Experiment-Gateway-Arrival-Timestamp", gatewayArrivalTimestamp);
+    }
+    if (gatewayArrivalMonotonicNs) {
+      res.set("X-Experiment-Gateway-Arrival-Monotonic-Ns", gatewayArrivalMonotonicNs);
+    }
+  }
   next();
 });
 
 app.get("/orders", verifyClientCertificate, verifyToken, (req, res) => {
-  if (experimentMode) res.set("X-Experiment-Protected-Operation-Executed", "true");
+  if (experimentMode) {
+    const executionTimestamp = new Date().toISOString();
+    const executionMonotonicNs = process.hrtime.bigint().toString();
+    const execution = {
+      event: "protected_operation_executed",
+      timestamp: executionTimestamp,
+      monotonic_ns: executionMonotonicNs,
+      request_id: req.get("x-request-id") || null,
+      concurrent_batch_id: req.get("x-concurrent-batch-id") || null,
+      jti_hash: crypto.createHash("sha256").update(req.decoded.jti).digest("hex"),
+      replica_id: process.env.REPLICA_ID || "order-1",
+      concurrency_level: Number(req.get("x-experiment-concurrency-level")) || null,
+      scenario_id: req.get("x-experiment-scenario-id") || null,
+      method: req.get("x-experiment-method") || null,
+      replica_count: Number(req.get("x-experiment-replica-count")) || null,
+      repetition: Number(req.get("x-experiment-repetition")) || null
+    };
+    process.stdout.write(`EXPERIMENT_EVENT ${JSON.stringify(execution)}\n`);
+    res.set("X-Experiment-Protected-Operation-Executed", "true");
+  }
   res.json({
     message: "Orders retrieved successfully",
     orders: [

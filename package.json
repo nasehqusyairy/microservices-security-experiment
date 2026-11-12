@@ -4,6 +4,7 @@
   "description": "Securing Inter-Service Communication in Containerised Microservice Architectures",
   "scripts": {
     "demo": "node run-local-demo.js",
+    "test": "npm --prefix order-service test",
     "install:all": "npm install && cd auth-service && npm install && cd ../order-service && npm install && cd ../gateway && npm install && cd ../attacker && npm install",
     "docker:vulnerable": "docker-compose -f docker-compose.vulnerable.yml up --build",
     "docker:secure": "docker-compose -f docker-compose.secure.yml up --build",

@@ -264,45 +264,65 @@ Each repetition starts clean Order Service processes and uses a unique Redis
 key prefix. Requests are routed by replica ID through an experiment-only
 gateway selector and the actual receiving replica is logged and checked.
 Scenarios with two or three replicas include a first use and a replay at
-different replicas. Concurrent batches record request IDs and the requested
-and observed request distribution for every replica. In-memory concurrency is
-validated per replica; Redis and MySQL concurrency is validated globally.
-Each run also measures replay state after restarting `order-1`.
+different replicas. Full mode tests concurrency levels `[1, 5, 10, 25, 50]`;
+quick mode retains `[1, 5]`. Each configured level runs once per method,
+replica count, and repetition, for 180 concurrent batches in full mode.
+
+Concurrent routing is deterministic round-robin starting at `order-1`. The
+runner prepares every HTTP request before releasing a client launch barrier.
+Client launch, gateway arrival, Order Service arrival, and replay-store start
+and end are recorded with wall-clock and monotonic timestamps. The monotonic
+clock values are comparable because the native runner and child services share
+the same host.
+
+The local `Set` must accept at most one request per process; this local
+atomicity is reported separately from the global one-time-use invariant. For
+all methods, one `jti` must produce at most one protected operation across the
+deployment. In-memory acceptance at multiple replicas is reported as a global
+security violation, not as success or as an experiment execution failure.
+Zero protected operations are reported as an availability/execution failure,
+not as successful replay protection. Order Service execution is recorded both
+in a response header and as a separate structured event.
 
 ### Run the experiment
 
-Install dependencies and generate the local mTLS certificates:
+Native execution is the primary path; Docker Compose is optional. On Ubuntu,
+install Node.js/npm, OpenSSL, Redis, and MySQL 8, then start the host services.
+For example:
 
 ```bash
+sudo apt install redis-server mysql-server openssl
+sudo systemctl enable --now redis-server mysql
+node --version
+redis-cli ping
+mysqladmin ping
 npm run install:all
 npm run certs
+sudo mysql < database/init-replay-mysql.sql
 ```
 
 The root `.env.example` contains defaults for local services and the experiment.
 `run-local-demo-2.js` always loads these defaults, then applies any matching
 values from `.env` or the shell environment, so no JS database config file or
-manual environment exports are needed. Docker Compose also accepts the example
-file directly:
+manual environment exports are needed. Defaults use Redis at
+`127.0.0.1:6379` and MySQL at `127.0.0.1:3306` with the limited `mse_runner`
+account. The SQL setup uses the host's local root access only to provision the
+database/account; the Node.js runner connects over TCP as `mse_runner`. This
+avoids relying on root's `unix_socket` authentication for application access.
+
+Confirm services and the runner CLI without starting an experiment:
 
 ```bash
-docker compose --env-file .env.example -f docker-compose.secure.yml up -d mysql-experiment redis
+redis-cli ping
+mysqladmin ping
+node run-local-demo-2.js --help
 ```
 
-Start the shared experiment dependencies. Compose runs MySQL 8.4 with a
-dedicated experiment database on host port 3308, avoiding collision with a
-locally installed MySQL server on port 3306:
-
-```bash
-docker compose --env-file .env.example -f docker-compose.secure.yml ps mysql-experiment redis
-```
-
-For a native MySQL installation, execute `database/init-replay-mysql.sql` as
-the local root account. The runner uses the `mysql2/promise` driver and
-the root environment file for preflight and experiment connections. The
-defaults target native MySQL at `127.0.0.1:3306` with the `mse_runner` account
-and empty password created by the SQL setup script. To run the local runner
-against the Compose database instead, set `MYSQL_PORT=3308` in the root
-environment file. Preflight verifies TCP access and required privileges.
+Generate certificates with `npm run certs` if they have not already been
+created. Stop the host services with `sudo systemctl stop mysql redis-server`
+when finished. Preflight verifies Redis TCP/PING and replay-store operations,
+and MySQL TCP access, version, database, privileges, InnoDB engine, primary
+key, and transactional INSERT/SELECT before any scenario starts.
 
 Run the quick experiment (1 repetition, 10 legitimate requests, 10 replay
 attempts, concurrency levels 1 and 5):
@@ -312,7 +332,7 @@ node run-local-demo-2.js --mode quick
 ```
 
 Run the larger default experiment (3 repetitions, 100 requests/attempts, and
-concurrency 1, 10, and 50):
+concurrency 1, 5, 10, 25, and 50):
 
 ```bash
 node run-local-demo-2.js --mode full
@@ -349,8 +369,9 @@ results/replay-<UTC timestamp>-<id>/
 └── events.jsonl
 ```
 
-`requests.csv` is the source of truth: one row per measured first use, replay,
-concurrent replay, and performance request. It includes request ID, one-way
+`requests.csv` is the source of truth: one row per measured warm-up, first use,
+replay, concurrent replay, and performance request. Warm-up requests are
+counted and logged but excluded from performance-phase metrics. It includes request ID, one-way
 `jti_hash`, method/store, requested and actual replica, request type/timestamps,
 HTTP/store outcomes, and protected-operation execution evidence. Unknown
 execution state remains empty, not `false`; JWTs and credentials are never
@@ -373,9 +394,17 @@ python3 analysis/analyze_replay_protection.py results/<experiment-directory>
 The script validates that all 12 method/replica configurations and their
 repetitions completed, verifies routing/concurrency/restart/protected-operation
 observations, recomputes metrics from `requests.csv`, and compares them with
-`summary.csv`. It writes a validation report and derived tables. Comparison
+`summary.csv`. For schema version 3 it also checks that every configured level
+has exactly one batch, validates request-level timing and independent execution
+events, and writes `concurrent_batch_metrics.csv`. It distinguishes local
+process atomicity, global one-time-use compliance, execution availability,
+replica distribution, and server arrival spread. Security violations are
+measured results, not fabricated as successful protection or confused with
+incomplete experiment execution. It writes a validation report and derived tables. Comparison
 plots are emitted only when the full matrix is available and valid; otherwise
-the analysis exits non-zero and marks the run invalid. To use it interactively
+the analysis exits non-zero and marks the run invalid. Concurrent comparisons
+preserve the concurrency-level dimension and are omitted unless all methods
+have valid data. To use it interactively
 in Jupyter:
 
 ```bash
@@ -416,7 +445,17 @@ summary = pd.read_csv("results/<experiment-directory>/summary.csv")
 - Throughput = completed performance requests / wall-clock span of observed
   performance request timestamps; setup and warm-up are excluded.
 - Protected-operation execution count includes only requests for which the
-  Order Service handler returned explicit execution evidence.
+  Order Service handler returned explicit execution evidence; new runs also
+  contain a matching independent `protected_operation_executed` event.
+- Global one-time-use compliance requires no more than one accepted outcome
+  and no more than one protected-operation execution per batch/jti. Execution
+  availability is reported separately and requires exactly one execution;
+  zero execution is not counted as a successful security result.
+- Local In-memory process atomicity is the per-replica maximum of one accepted
+  request. It does not imply global one-time-use compliance.
+- Arrival spread is `max(order_service_arrival_monotonic_ns) -
+  min(order_service_arrival_monotonic_ns)` converted to milliseconds, and is
+  available only when all batch requests have same-host monotonic timestamps.
 - All methods use the same local machine, JWT rules, route, payload, and
   configured request counts. The local controlled testbed is not a production
   benchmark. Results depend on host load, Redis configuration, network stack,
@@ -424,8 +463,23 @@ summary = pd.read_csv("results/<experiment-directory>/summary.csv")
   on restart; Redis without TTL intentionally leaves the unique experiment
   keys in Redis after a run.
 
-Run the replay-store and logging tests with:
+Run unit tests (no external services required) with:
 
 ```bash
-npm test --prefix order-service
+npm test
+```
+
+Live Redis/MySQL concurrency integration tests are opt-in and use unique test
+keys/rows:
+
+```bash
+REPLAY_STORE_INTEGRATION=true npm --prefix order-service test
+```
+
+The 60-batch, one-repetition pilot is intentionally not started automatically.
+Run it only after confirming native dependencies and reviewing the pending
+configuration:
+
+```bash
+node run-local-demo-2.js --mode full --repetitions 1
 ```
