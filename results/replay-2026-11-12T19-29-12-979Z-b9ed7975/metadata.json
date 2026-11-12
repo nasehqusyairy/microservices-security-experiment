@@ -1,0 +1,319 @@
+{
+  "experiment_id": "replay-2026-11-12T19-29-12-979Z-b9ed7975",
+  "start_time": "2026-11-12T19:29:12.987124098Z",
+  "end_time": "2026-11-12T19:29:54.162199996Z",
+  "repository_commit": "64b6f25cc3ba2263ed2ccb1e7162081693259cb4",
+  "node_version": "v24.15.0",
+  "operating_system": "Linux 7.0.0-43-generic (x64)",
+  "cpu": [
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3701
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3699
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3700
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3707
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3699
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3699
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3703
+    },
+    {
+      "model": "Intel(R) Core(TM) i5-10300H CPU @ 2.50GHz",
+      "speed_mhz": 3695
+    }
+  ],
+  "total_memory_bytes": 16055603200,
+  "redis_version": null,
+  "redis_available": false,
+  "mariadb_version": null,
+  "mariadb_available": false,
+  "configuration": {
+    "mode": "full",
+    "repetitions": 3,
+    "legitimate_requests_per_repetition": 100,
+    "replay_attempts_per_repetition": 100,
+    "concurrency_levels": [
+      1,
+      10,
+      50
+    ],
+    "token_lifetime_seconds": 300,
+    "redis_url": "redis://127.0.0.1:6379",
+    "output_directory": "/home/nasyikhqusyairy/Projects/repositories/mse/results/replay-2026-11-12T19-29-12-979Z-b9ed7975"
+  },
+  "methods": {
+    "in-memory": "Process-local Set keyed by SHA-256(jti); state is lost on service restart.",
+    "redis": "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
+    "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",
+    "mariadb": "Shared MariaDB InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
+  },
+  "token_semantics": "One-time-use service token: one jti can authorize at most one protected operation.",
+  "jwt_configuration": {
+    "issuer": "auth-service",
+    "audience": "order-service",
+    "subject": "order_service",
+    "algorithm": "HS256",
+    "token_lifetime_seconds": 300,
+    "secret_recorded": false
+  },
+  "scenarios": [
+    {
+      "scenario_id": "S1",
+      "method": "in-memory",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S2",
+      "method": "redis",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S3",
+      "method": "redis-ttl",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S4",
+      "method": "mariadb",
+      "replica_count": 1
+    },
+    {
+      "scenario_id": "S5",
+      "method": "in-memory",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S6",
+      "method": "redis",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S7",
+      "method": "redis-ttl",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S8",
+      "method": "mariadb",
+      "replica_count": 2
+    },
+    {
+      "scenario_id": "S9",
+      "method": "in-memory",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S10",
+      "method": "redis",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S11",
+      "method": "redis-ttl",
+      "replica_count": 3
+    },
+    {
+      "scenario_id": "S12",
+      "method": "mariadb",
+      "replica_count": 3
+    }
+  ],
+  "request_counts": {
+    "planned_measured_requests": 20328,
+    "completed_measured_requests": 5082
+  },
+  "request_schema_version": 1,
+  "measurement": {
+    "latency": "Runner-observed end-to-end HTTP latency using process.hrtime.bigint(); excludes token setup and health checks.",
+    "throughput": "Completed performance-phase requests divided by wall-clock span of recorded performance request start/end timestamps.",
+    "percentiles": "Linear interpolation between adjacent sorted observations; standard deviation uses sample formula (n-1).",
+    "store_latency": "Order Service's internal replay-store consume() duration, returned in an experiment-only response header.",
+    "resource_metrics": "CPU and process memory utilization were not sampled; summary columns remain empty."
+  },
+  "warnings": [
+    "Redis unavailable; Redis and Redis-TTL scenarios will be recorded as failed.",
+    "MariaDB unavailable; MariaDB scenarios will be recorded as failed."
+  ],
+  "errors": [
+    {
+      "scenario_id": "S2",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S2",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S2",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S3",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S3",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S3",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S4",
+      "repetition": 1,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S4",
+      "repetition": 2,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S4",
+      "repetition": 3,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S6",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S6",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S6",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S7",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S7",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S7",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S8",
+      "repetition": 1,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S8",
+      "repetition": 2,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S8",
+      "repetition": 3,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S10",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S10",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S10",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S11",
+      "repetition": 1,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S11",
+      "repetition": 2,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S11",
+      "repetition": 3,
+      "category": "redis_unavailable",
+      "message": "Redis is unavailable; Redis methods were not run"
+    },
+    {
+      "scenario_id": "S12",
+      "repetition": 1,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S12",
+      "repetition": 2,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    },
+    {
+      "scenario_id": "S12",
+      "repetition": 3,
+      "category": "mariadb_unavailable",
+      "message": "MariaDB is unavailable; MariaDB methods were not run"
+    }
+  ],
+  "interrupted": false
+}
