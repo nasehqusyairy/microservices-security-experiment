@@ -4,6 +4,26 @@ version: "3.8"
 # Run: docker-compose -f docker-compose.secure.yml up
 
 services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: mse-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-mse}
+      MARIADB_USER: ${MARIADB_USER:-mse}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p$${MARIADB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - microservices-net
+
   auth-service:
     build: ./auth-service
     command: node server-secure.js
@@ -24,12 +44,20 @@ services:
     environment:
       - JWT_SECRET=UltraSecureSecret123!XYZ
       - NODE_ENV=production
+      - MARIADB_HOST=mariadb
+      - MARIADB_PORT=3306
+      - MARIADB_DATABASE=${MARIADB_DATABASE:-mse}
+      - MARIADB_USER=${MARIADB_USER:-mse}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD:-}
     volumes:
       - ./certs:/app/../certs:ro
     networks:
       - microservices-net
     depends_on:
-      - auth-service
+      auth-service:
+        condition: service_started
+      mariadb:
+        condition: service_healthy
 
   gateway:
     build: ./gateway
@@ -56,6 +84,9 @@ services:
       - microservices-net
     depends_on:
       - gateway
+
+volumes:
+  mariadb-data:
 
 networks:
   microservices-net:

@@ -19,10 +19,12 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { createClient } = require("redis");
+const mariadb = require("mariadb");
 const {
   InMemoryReplayStore,
   RedisReplayStore,
-  RedisTtlReplayStore
+  RedisTtlReplayStore,
+  MariaDBReplayStore
 } = require("./replay-stores");
 const { createReplayMiddleware } = require("./replay-auth");
 
@@ -40,6 +42,7 @@ const replayMethod = process.env.REPLAY_METHOD || "in-memory";
 const replayPrefix = process.env.REPLAY_KEY_PREFIX || "microservices:replay";
 let replayStore;
 let redisClient;
+let mariadbPool;
 
 if (replayMethod === "in-memory") {
   replayStore = new InMemoryReplayStore();
@@ -67,6 +70,21 @@ if (replayMethod === "in-memory") {
   replayStore = replayMethod === "redis"
     ? new RedisReplayStore(redisClient, replayPrefix)
     : new RedisTtlReplayStore(redisClient, replayPrefix);
+} else if (replayMethod === "mariadb") {
+  const mariadbConfig = {
+    host: process.env.MARIADB_HOST || "127.0.0.1",
+    port: Number(process.env.MARIADB_PORT || 3306),
+    database: process.env.MARIADB_DATABASE || "mse",
+    user: process.env.MARIADB_USER || "mse",
+    password: process.env.MARIADB_PASSWORD || "",
+    connectionLimit: 10,
+    connectTimeout: 5000,
+    acquireTimeout: 5000,
+    timeout: 5000,
+    multipleStatements: false
+  };
+  mariadbPool = mariadb.createPool(mariadbConfig);
+  replayStore = new MariaDBReplayStore(mariadbPool, "consumed_tokens");
 } else {
   console.error(`[FATAL] Unsupported REPLAY_METHOD: ${replayMethod}`);
   process.exit(1);
@@ -128,6 +146,9 @@ if (!(fs.existsSync(orderKey) && fs.existsSync(orderPem) && fs.existsSync(caPem)
 
 async function start() {
   if (redisClient) await redisClient.connect();
+  if (mariadbPool) {
+    await replayStore.initialize();
+  }
 
   const server = https.createServer({
     key: fs.readFileSync(orderKey),
@@ -146,6 +167,7 @@ async function start() {
   const shutdown = async () => {
     server.close();
     if (redisClient && redisClient.isOpen) await redisClient.quit();
+    if (mariadbPool) await mariadbPool.end();
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

@@ -52,4 +52,51 @@ class RedisTtlReplayStore extends RedisReplayStore {
   }
 }
 
-module.exports = { InMemoryReplayStore, RedisReplayStore, RedisTtlReplayStore };
+class MariaDBReplayStore {
+  constructor(pool, tableName = "consumed_tokens") {
+    this.pool = pool;
+    this.tableName = tableName;
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (this.initialized) return;
+    const createTableSql = `
+      CREATE TABLE IF NOT EXISTS ${this.tableName} (
+        jti_hash CHAR(64) NOT NULL PRIMARY KEY,
+        expires_at BIGINT NOT NULL,
+        consumed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `;
+    await this.pool.query(createTableSql);
+    this.initialized = true;
+  }
+
+  async consume(jti, expiresAt) {
+    const jtiHash = crypto.createHash("sha256").update(String(jti)).digest("hex");
+    try {
+      await this.initialize();
+      await this.pool.execute(`INSERT INTO ${this.tableName} (jti_hash, expires_at) VALUES (?, ?)`, [
+        jtiHash,
+        Number(expiresAt)
+      ]);
+      return { outcome: "accepted", jtiHash, expiresAt };
+    } catch (error) {
+      if (error && (error.code === "ER_DUP_ENTRY" || error.errno === 1062 || error.code === "23505")) {
+        return { outcome: "replay_detected", jtiHash, expiresAt };
+      }
+      return {
+        outcome: "store_error",
+        errorCategory: error && error.code ? error.code : "database_error",
+        message: error && error.message ? error.message : "Database replay store failed"
+      };
+    }
+  }
+}
+
+module.exports = {
+  InMemoryReplayStore,
+  RedisReplayStore,
+  RedisTtlReplayStore,
+  MariaDBReplayStore
+};

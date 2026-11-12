@@ -233,6 +233,7 @@ using `REPLAY_METHOD`:
 | `in-memory` | Process-local Set; atomically accepts a `jti` once, but replicas and restarts have independent/empty state. |
 | `redis` | Atomic Redis `SET NX`; shared across replicas and retained without expiry for the experiment. |
 | `redis-ttl` | Atomic Redis `SET NX PX`; entry TTL is the JWT's remaining lifetime. |
+| `mariadb` | Shared MariaDB InnoDB table using `INSERT ... VALUES (...)` on a SHA-256 `jti_hash` primary key; duplicate inserts are classified as replay detection and DB failures as `store_error`. |
 
 JWT signature, issuer, audience, service identity, expiry, and `jti` validation
 are the same for all methods and happen before replay-store lookup. Redis
@@ -249,9 +250,15 @@ the `jti`. The experimental token-provisioning route is available only when
 | S1 | in-memory | 1 |
 | S2 | redis | 1 |
 | S3 | redis-ttl | 1 |
-| S4 | in-memory | 2 |
-| S5 | redis | 2 |
-| S6 | redis-ttl | 2 |
+| S4 | mariadb | 1 |
+| S5 | in-memory | 2 |
+| S6 | redis | 2 |
+| S7 | redis-ttl | 2 |
+| S8 | mariadb | 2 |
+| S9 | in-memory | 3 |
+| S10 | redis | 3 |
+| S11 | redis-ttl | 3 |
+| S12 | mariadb | 3 |
 
 Each repetition starts clean Order Service processes and uses a unique Redis
 key prefix. The two-replica run routes requests deterministically to

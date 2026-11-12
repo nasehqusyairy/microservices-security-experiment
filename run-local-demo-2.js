@@ -16,14 +16,20 @@ const {
 } = require("./experiment-logging");
 
 const ROOT = __dirname;
-const METHODS = ["in-memory", "redis", "redis-ttl"];
+const METHODS = ["in-memory", "redis", "redis-ttl", "mariadb"];
 const SCENARIOS = [
   { scenario_id: "S1", method: "in-memory", replica_count: 1 },
   { scenario_id: "S2", method: "redis", replica_count: 1 },
   { scenario_id: "S3", method: "redis-ttl", replica_count: 1 },
-  { scenario_id: "S4", method: "in-memory", replica_count: 2 },
-  { scenario_id: "S5", method: "redis", replica_count: 2 },
-  { scenario_id: "S6", method: "redis-ttl", replica_count: 2 }
+  { scenario_id: "S4", method: "mariadb", replica_count: 1 },
+  { scenario_id: "S5", method: "in-memory", replica_count: 2 },
+  { scenario_id: "S6", method: "redis", replica_count: 2 },
+  { scenario_id: "S7", method: "redis-ttl", replica_count: 2 },
+  { scenario_id: "S8", method: "mariadb", replica_count: 2 },
+  { scenario_id: "S9", method: "in-memory", replica_count: 3 },
+  { scenario_id: "S10", method: "redis", replica_count: 3 },
+  { scenario_id: "S11", method: "redis-ttl", replica_count: 3 },
+  { scenario_id: "S12", method: "mariadb", replica_count: 3 }
 ];
 const ORDERS_PATH = "/orders";
 let activeProcesses = new Set();
@@ -159,7 +165,8 @@ function collectDependencies() {
     ["gateway express", path.join(ROOT, "gateway/node_modules/express")],
     ["gateway http-proxy-middleware", path.join(ROOT, "gateway/node_modules/http-proxy-middleware")],
     ["order-service express", path.join(ROOT, "order-service/node_modules/express")],
-    ["order-service redis client", path.join(ROOT, "order-service/node_modules/redis")]
+    ["order-service redis client", path.join(ROOT, "order-service/node_modules/redis")],
+    ["order-service mariadb client", path.join(ROOT, "order-service/node_modules/mariadb")]
   ];
   return dependencies.filter(([, dependencyPath]) => !fs.existsSync(dependencyPath)).map(([name]) => name);
 }
@@ -200,6 +207,24 @@ async function checkRedis(redisUrl) {
     await client.quit();
     const match = version.match(/^redis_version:([^\r\n]+)/m);
     return { available: true, version: match ? match[1] : null };
+  } catch {
+    return { available: false, version: null };
+  }
+}
+
+async function checkMariaDB(config = {}) {
+  try {
+    const mariadb = require(path.join(ROOT, "order-service/node_modules/mariadb"));
+    const connection = await mariadb.createConnection({
+      host: config.mariadbHost || process.env.MARIADB_HOST || "127.0.0.1",
+      port: Number(config.mariadbPort || process.env.MARIADB_PORT || 3306),
+      user: config.mariadbUser || process.env.MARIADB_USER || "mse",
+      password: config.mariadbPassword || process.env.MARIADB_PASSWORD || "",
+      database: config.mariadbDatabase || process.env.MARIADB_DATABASE || "mse"
+    });
+    const result = await connection.query("SELECT VERSION() AS version");
+    await connection.end();
+    return { available: true, version: result && result[0] ? result[0]["VERSION()"] : null };
   } catch {
     return { available: false, version: null };
   }
@@ -492,7 +517,7 @@ function replayAttemptCount(requests) {
   return replayRows + [...concurrentGroups.values()].reduce((sum, count) => sum + Math.max(0, count - 1), 0);
 }
 
-async function runScenario({ experimentId, scenario, repetition, config, authPort, experimentKey, certDir, redisAvailable }) {
+async function runScenario({ experimentId, scenario, repetition, config, authPort, experimentKey, certDir, redisAvailable, mariadbAvailable }) {
   const scenarioStart = timestamp();
   appendEvent("scenario_started", {
     scenario_id: scenario.scenario_id,
@@ -509,7 +534,7 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
   const scenarioErrors = [];
   let restartStateRetained = null;
 
-  if (redisMethod && !redisAvailable) {
+  if ((scenario.method === "redis" || scenario.method === "redis-ttl") && !redisAvailable) {
     runtimeIssues.push({
       scenario_id: scenario.scenario_id,
       repetition,
@@ -518,6 +543,18 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
     });
     recordScenarioFailure(activeFiles, experimentId, { ...scenario, repetition }, repetition,
       "Redis is unavailable; Redis methods were not run", scenarioStart, config);
+    return;
+  }
+
+  if (scenario.method === "mariadb" && !mariadbAvailable) {
+    runtimeIssues.push({
+      scenario_id: scenario.scenario_id,
+      repetition,
+      category: "mariadb_unavailable",
+      message: "MariaDB is unavailable; MariaDB methods were not run"
+    });
+    recordScenarioFailure(activeFiles, experimentId, { ...scenario, repetition }, repetition,
+      "MariaDB is unavailable; MariaDB methods were not run", scenarioStart, config);
     return;
   }
 
@@ -531,6 +568,11 @@ async function runScenario({ experimentId, scenario, repetition, config, authPor
         REPLAY_METHOD: scenario.method,
         REPLAY_KEY_PREFIX: prefix,
         REDIS_URL: config.redisUrl,
+        MARIADB_HOST: process.env.MARIADB_HOST || "127.0.0.1",
+        MARIADB_PORT: String(process.env.MARIADB_PORT || 3306),
+        MARIADB_DATABASE: process.env.MARIADB_DATABASE || "mse",
+        MARIADB_USER: process.env.MARIADB_USER || "mse",
+        MARIADB_PASSWORD: process.env.MARIADB_PASSWORD || "",
         JWT_SECRET: process.env.__MSE_EXPERIMENT_JWT_SECRET,
         CERTS_DIR: certDir,
         PORT: String(port),
@@ -841,13 +883,26 @@ async function main() {
   const certificateStatus = validateCertificates(certDir);
   const missingDependencies = collectDependencies();
   let redisStatus = { available: false, version: null };
+  let mariadbStatus = { available: false, version: null };
   if (!missingDependencies.includes("order-service redis client")) {
     redisStatus = await checkRedis(config.redisUrl);
   }
+  if (!missingDependencies.includes("order-service mariadb client")) {
+    mariadbStatus = await checkMariaDB({
+      mariadbHost: process.env.MARIADB_HOST,
+      mariadbPort: process.env.MARIADB_PORT,
+      mariadbDatabase: process.env.MARIADB_DATABASE,
+      mariadbUser: process.env.MARIADB_USER,
+      mariadbPassword: process.env.MARIADB_PASSWORD
+    });
+  }
   if (missingDependencies.length) errors.push(`Missing dependencies: ${missingDependencies.join(", ")}`);
   if (certificateStatus.error) errors.push(certificateStatus.error);
-  if (METHODS.some((method) => method !== "in-memory") && !redisStatus.available) {
+  if ((METHODS.some((method) => method === "redis" || method === "redis-ttl")) && !redisStatus.available) {
     warnings.push("Redis unavailable; Redis and Redis-TTL scenarios will be recorded as failed.");
+  }
+  if (METHODS.includes("mariadb") && !mariadbStatus.available) {
+    warnings.push("MariaDB unavailable; MariaDB scenarios will be recorded as failed.");
   }
 
   const experimentSecret = crypto.randomBytes(32).toString("hex");
@@ -864,6 +919,8 @@ async function main() {
     total_memory_bytes: os.totalmem(),
     redis_version: redisStatus.version,
     redis_available: redisStatus.available,
+    mariadb_version: mariadbStatus.version,
+    mariadb_available: mariadbStatus.available,
     configuration: {
       mode: config.mode,
       repetitions: config.repetitions,
@@ -877,7 +934,8 @@ async function main() {
     methods: {
       "in-memory": "Process-local Set keyed by SHA-256(jti); state is lost on service restart.",
       redis: "Shared atomic Redis SET NX keyed by SHA-256(jti), retained without expiry for the experiment.",
-      "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime."
+      "redis-ttl": "Shared atomic Redis SET NX PX keyed by SHA-256(jti), TTL is the JWT's remaining lifetime.",
+      mariadb: "Shared MariaDB InnoDB table keyed by SHA-256(jti), using atomic INSERT into consumed_tokens."
     },
     token_semantics: "One-time-use service token: one jti can authorize at most one protected operation.",
     jwt_configuration: {
@@ -911,6 +969,9 @@ async function main() {
   activeFiles.event({ event: "experiment_started", experiment_id: experimentId, mode: config.mode });
   if (redisStatus.available) {
     activeFiles.event({ event: "redis_ready", redis_version: redisStatus.version });
+  }
+  if (mariadbStatus.available) {
+    activeFiles.event({ event: "mariadb_ready", mariadb_version: mariadbStatus.version });
   }
 
   let authProcess;
@@ -948,7 +1009,8 @@ async function main() {
         console.log(`[${scenario.scenario_id} ${repetition}/${config.repetitions}] ${scenario.method}, ${scenario.replica_count} replica(s)`);
         await runScenario({
           experimentId, scenario, repetition, config, authPort, experimentKey, certDir,
-          redisAvailable: redisStatus.available
+          redisAvailable: redisStatus.available,
+          mariadbAvailable: mariadbStatus.available
         });
       }
       if (interrupted) break;
