@@ -1,0 +1,2 @@
+2026-11-19T08:12:47.796Z Error: replica link was not verified down after network detach
+    at file:///home/nasyikhqusyairy/Projects/repositories/mse/research/dpop-durability/scripts/run-replicated-experiment.js:61:108

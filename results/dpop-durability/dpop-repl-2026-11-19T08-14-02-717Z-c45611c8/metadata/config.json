@@ -1,0 +1,30 @@
+{
+  "experiment_id": "dpop-repl-2026-11-19T08-14-02-717Z-c45611c8",
+  "created_utc": "2026-11-19T08:14:02.717Z",
+  "repetitions": 1,
+  "git_commit": "5ab4b4f5cbdbc8e36216075615f941b9748253ef",
+  "node": "v26.7.0",
+  "docker": "29.8.1",
+  "redis_image": "redis@sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7",
+  "redis_version": "7.4.12",
+  "redis_image_digest": "sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7",
+  "hardware": {
+    "cpus": 8,
+    "total_memory_bytes": 16055599104,
+    "platform": "Linux 7.0.0-43-generic x64"
+  },
+  "topology": "single Linux host; isolated two-node Redis primary/replica containers; manually promoted replica; not Sentinel/Cluster; application verifier in Node runner",
+  "acknowledgement_semantics": {
+    "primary_only": "SET NX returns OK; no replica confirmation",
+    "wait": "SET then WAIT 1 1500 on same Redis connection; check actual replica count",
+    "wait_insufficient": "replica detached; WAIT 1 250 returns actual count, fail closed unless >=1",
+    "waitaof": "AOF enabled with appendfsync always on both nodes; SET then WAITAOF 1 1 2000 on same connection; check local and replica counts"
+  },
+  "fault": "docker SIGKILL primary after recorded acknowledgement; manually promote the only replica with REPLICAOF NO ONE; replay identical proof to promoted replica",
+  "limitations": [
+    "same-host replication and shared kernel/storage",
+    "no Sentinel or Redis Cluster automatic failover",
+    "no real network partition; replication is administratively detached for primary-only/insufficient-ack cases",
+    "no MySQL or three resource-service processes"
+  ]
+}

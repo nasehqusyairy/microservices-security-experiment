@@ -1,0 +1,94 @@
+{
+  "valid_experiment_runs": 4,
+  "invalid_or_partial_runs": 10,
+  "runs": [
+    {
+      "experiment_id": "dpop-2026-11-19T07-45-02-093Z-2921ab71",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset"
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T07-45-21-800Z-02d1366d",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:45:22.030Z Error: Command failed: docker run -d --name mse-dpop-7007d94f --memory=256m --cpus=0.50 -p 127.0.0.1:16379:6379 redis:7-alpine redis-server --save  --appen"
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T07-45-45-224Z-351b6c7c",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:45:45.259Z Error: Command failed: docker run -d --name mse-dpop-896ef589 --memory=256m --cpus=0.50 -p 127.0.0.1:6379 redis:7-alpine redis-server --save  --appendonly "
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T07-45-53-938Z-b0c24002",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:46:04.445Z Error: isolated Redis did not become healthy"
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T07-46-29-011Z-55d0f618",
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T07-49-40-957Z-d36a3dee",
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-01-11-999Z-8df4f252",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset"
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-01-41-648Z-b0f5f475",
+      "valid": false,
+      "reason": "one-repetition replicated-topology pilot excluded by predeclared inclusion policy"
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-03-05-644Z-a8b2f011",
+      "valid": false,
+      "reason": "Invalid fault ordering: replica was promoted before primary SIGKILL. Retained intact for audit, excluded from all main estimates."
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-12-19-300Z-705be9bf",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T08:12:47.796Z Error: replica link was not verified down after network detach"
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-13-20-113Z-2b70cec0",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T08:13:43.686Z Error: timed out waiting for replica detach"
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-14-02-717Z-c45611c8",
+      "valid": false,
+      "reason": "incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T08:14:25.115Z Error: Redis not healthy on mapped port 32841"
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-14-59-904Z-e3af2e9c",
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-16-16-028Z-a10c2e92",
+      "valid": true,
+      "reason": ""
+    }
+  ],
+  "schema": "dpop-durability-v1",
+  "checks": [
+    "required fields",
+    "unique request IDs and experiment/run IDs",
+    "experiment metadata",
+    "request counts",
+    "strict event monotonic ordering",
+    "first-use/replay pairing",
+    "JTI correlation",
+    "first-use protected operation",
+    "replay not rejected after protected execution",
+    "backend health before scenarios and after recovery",
+    "fault event",
+    "recovery event",
+    "primary acknowledgement",
+    "acknowledged-loss outcome",
+    "run summaries recomputed from raw requests"
+  ]
+}

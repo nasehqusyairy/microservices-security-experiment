@@ -1,0 +1,9 @@
+scenario,backend,independent_repetitions,replay_attempts,replay_acceptances,replay_acceptance_rate,wilson95_low,wilson95_high,replay_detections,acknowledged_write_losses,duplicate_protected_operations,valid_first_uses_accepted,valid_first_use_success_rate,latency_observations,latency_p50_ms,latency_p95_ms,latency_p99_ms
+memory_normal,memory,10,10,0,0.0,0,0.2775401687666166,10,0,0,10,1.0,20,0.511028,2.059091,3.15787
+memory_process_restart,memory,10,10,10,1.0,0.7224598312333834,1,0,0,10,10,1.0,20,0.4335275,0.864968,1.012202
+redis_normal_cross_instance,redis,10,10,0,0.0,0,0.2775401687666166,10,0,0,10,1.0,20,0.6312070000000001,1.318794,1.831695
+redis_primary_sigkill,redis,10,10,10,1.0,0.7224598312333834,1,0,10,10,10,1.0,20,0.804177,2.25085,2.408825
+primary_only_detached,primary_only_detached,5,5,5,1.0,0.5655085052479191,1,0,5,5,5,1.0,10,0.7632675,2.438128,2.438128
+wait_replica_acked,wait_replica_acked,5,5,0,0.0,0,0.43449149475208104,5,0,0,5,1.0,10,0.9239765,2.048581,2.048581
+wait_ack_insufficient,wait_ack_insufficient,5,5,5,1.0,0.5655085052479191,1,0,0,0,0,0.0,10,126.727566,336.681172,336.681172
+waitaof_local_replica_acked,waitaof_local_replica_acked,5,5,0,0.0,0,0.43449149475208104,5,0,0,5,1.0,10,10.3793975,208.071995,208.071995

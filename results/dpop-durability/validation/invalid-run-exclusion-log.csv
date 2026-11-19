@@ -1,0 +1,8 @@
+experiment_id,valid,reason
+dpop-2026-11-19T07-45-02-093Z-2921ab71,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset
+dpop-2026-11-19T07-45-21-800Z-02d1366d,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:45:22.030Z Error: Command failed: docker run -d --name mse-dpop-7007d94f --memory=256m --cpus=0.50 -p 127.0.0.1:16379:6379 redis:7-alpine redis-server --save  --appen
+dpop-2026-11-19T07-45-45-224Z-351b6c7c,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:45:45.259Z Error: Command failed: docker run -d --name mse-dpop-896ef589 --memory=256m --cpus=0.50 -p 127.0.0.1:6379 redis:7-alpine redis-server --save  --appendonly 
+dpop-2026-11-19T07-45-53-938Z-b0c24002,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:46:04.445Z Error: isolated Redis did not become healthy
+dpop-2026-11-19T07-46-29-011Z-55d0f618,False,duplicate experiment/run IDs
+dpop-2026-11-19T07-49-40-957Z-d36a3dee,False,duplicate experiment/run IDs
+validation,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset

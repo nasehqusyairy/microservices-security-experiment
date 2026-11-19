@@ -1,0 +1,5 @@
+scenario,backend,independent_repetitions,replay_attempts,replay_acceptances,replay_acceptance_rate,wilson95_low,wilson95_high,replay_detections,acknowledged_write_losses,duplicate_protected_operations,valid_first_uses_accepted,valid_first_use_success_rate,latency_observations,latency_p50_ms,latency_p95_ms,latency_p99_ms
+memory_normal,memory,5,5,0,0.0,0,0.43449149475208104,5,0,0,5,1.0,10,0.495553,2.059091,2.059091
+memory_process_restart,memory,5,5,5,1.0,0.5655085052479191,1,0,0,5,5,1.0,10,0.44434799999999997,0.766018,0.766018
+redis_normal_cross_instance,redis,5,5,0,0.0,0,0.43449149475208104,5,0,0,5,1.0,10,0.644452,1.023964,1.023964
+redis_primary_sigkill,redis,5,5,5,1.0,0.5655085052479191,1,0,5,5,5,1.0,10,0.826579,2.408825,2.408825

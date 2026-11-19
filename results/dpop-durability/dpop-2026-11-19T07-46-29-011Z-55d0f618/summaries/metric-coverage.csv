@@ -1,0 +1,14 @@
+metric,status,definition_or_limit
+Replay acceptance/detection,measured,10 attempts per condition; raw counts and Wilson 95% intervals
+Acknowledged-write loss,measured,"primary reply only, post-restart replay acceptance proves absence operationally"
+Duplicate protected execution,measured,"operation execution is the verifier result flag, one or two per proof"
+Cross-instance replay,"measured, logical only",separate store instances share standalone Redis; not separate service processes
+Concurrent identical proof,functional test only,32-way concurrency in process-memory unit test; not a multi-replica backend run
+Latency p50/p95/p99,"measured, descriptive",20 local verifier/store observations per condition; no sustained load
+Throughput,not measured,no workload-duration throughput run
+CPU utilization,not measured,host load average is contextual only
+Memory utilization,not compared,runner RSS was logged; no per-backend controlled utilization analysis
+Recovery time,measured for Redis restart only,fault initiation to successful Redis PING; excludes service health/client outage
+Availability/fail-closed during outage,not measured experimentally,store error is covered by functional test; no live HTTP outage traffic
+Redis WAIT/WAITAOF/manual replica promotion,measured,single replica on same host; no Sentinel/Cluster; see scenario-specific rows
+MySQL InnoDB,not executed,no isolated DPoP MySQL condition

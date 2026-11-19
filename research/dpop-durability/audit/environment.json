@@ -1,0 +1,53 @@
+{
+  "captured_utc": "2026-11-19T07:46:57Z",
+  "os": "Linux-7.0.0-43-generic-x86_64-with-glibc2.43",
+  "python": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]",
+  "node": "v26.7.0",
+  "docker_client": "29.8.1",
+  "docker_server": "29.8.1",
+  "docker_cpus_and_memory": "8 CPUs; 16055599104 bytes",
+  "cpu_count": 8,
+  "memory": {
+    "total": 16055599104,
+    "available_at_initial_audit_bytes": 5583457484
+  },
+  "working_tree_base_commit": "5ab4b4f5cbdbc8e36216075615f941b9748253ef",
+  "redis_host_binary": "not installed; container image redis:7-alpine used for isolated test",
+  "mysql_host_version": "mysql  Ver 8.4.13-0ubuntu0.26.04.2 for Linux on x86_64 ((Ubuntu))",
+  "active_containers": [
+    "mse-mysql-experiment|mysql:8.4|Up 5 hours (healthy)",
+    "mse-redis|redis:7-alpine|Up 5 hours (healthy)",
+    "supabase_studio_services|public.ecr.aws/supabase/studio:2026.10.05-sha-94b8b06|Up 5 hours (healthy)",
+    "supabase_pg_meta_services|public.ecr.aws/supabase/postgres-meta:v0.100.0|Up 5 hours (healthy)",
+    "supabase_storage_services|public.ecr.aws/supabase/storage-api:v1.80.2|Up 5 hours (healthy)",
+    "supabase_rest_services|public.ecr.aws/supabase/postgrest:v14.5|Up 5 hours",
+    "supabase_realtime_services|public.ecr.aws/supabase/realtime:v2.140.10|Up 5 hours (healthy)",
+    "supabase_inbucket_services|public.ecr.aws/supabase/mailpit:v1.31.3|Up 5 hours (healthy)",
+    "supabase_auth_services|public.ecr.aws/supabase/gotrue:v2.197.0|Up 5 hours (healthy)",
+    "supabase_kong_services|public.ecr.aws/supabase/kong:2.8.1|Up 5 hours (healthy)",
+    "supabase_vector_services|public.ecr.aws/supabase/vector:0.58.0-alpine|Up 5 hours (healthy)",
+    "supabase_analytics_services|public.ecr.aws/supabase/logflare:1.52.0|Up 5 hours (healthy)",
+    "supabase_db_services|public.ecr.aws/supabase/postgres:17.6.1.166|Up 5 hours (healthy)"
+  ],
+  "python_modules": {
+    "numpy": true,
+    "pandas": false,
+    "matplotlib": false,
+    "scipy": false,
+    "cryptography": true,
+    "jwt": true
+  },
+  "swap_bytes": 4294967296,
+  "disk_free_bytes_at_initial_audit": 145000000000,
+  "software": {
+    "redis_dpop_server": "7.4.12",
+    "redis_dpop_image": "redis@sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7",
+    "jose": "6.2.18",
+    "redis_node_client": "5.12.4",
+    "mysql_host": "8.4.13 (unused in DPoP runs)"
+  },
+  "experiment_container_limits": {
+    "standalone_redis": "256 MiB; 0.5 CPU",
+    "replicated_primary_and_replica": "128 MiB and 0.25 CPU each"
+  }
+}

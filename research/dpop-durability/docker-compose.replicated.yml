@@ -1,0 +1,34 @@
+name: mse-dpop-durability
+services:
+  primary:
+    image: redis@sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7
+    command: ["redis-server", "--save", "", "--appendonly", "${DPOP_REDIS_AOF:-no}", "--appendfsync", "${DPOP_REDIS_FSYNC:-always}"]
+    ports:
+      - "127.0.0.1:${DPOP_PRIMARY_PORT:-16390}:6379"
+    mem_limit: 128m
+    cpus: 0.25
+    networks: [dpop-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+  replica:
+    image: redis@sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7
+    command: ["redis-server", "--save", "", "--appendonly", "${DPOP_REDIS_AOF:-no}", "--appendfsync", "${DPOP_REDIS_FSYNC:-always}", "--replicaof", "primary", "6379"]
+    ports:
+      - "127.0.0.1:${DPOP_REPLICA_PORT:-16391}:6379"
+    mem_limit: 128m
+    cpus: 0.25
+    depends_on:
+      primary:
+        condition: service_healthy
+    networks: [dpop-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+networks:
+  dpop-net:
+    driver: bridge

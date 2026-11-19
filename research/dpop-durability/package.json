@@ -1,0 +1,8 @@
+{
+  "name": "mse-dpop-durability-experiment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"test":"node --test", "serve":"node scripts/serve-http.js", "client":"node src/client.js", "experiment":"node scripts/run-experiment.js", "experiment:replicated":"node scripts/run-replicated-experiment.js", "analyze":"python3 scripts/analyze.py"},
+  "dependencies": {"jose":"^6.1.0", "redis":"^5.8.0"}
+}

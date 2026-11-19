@@ -1,0 +1,1 @@
+{"experiment_id":"dpop-repl-2026-11-19T08-13-20-113Z-2b70cec0","timestamp_utc":"2026-11-19T08:13:25.418Z","monotonic_ns":"12394105353785","repetition":1,"scenario":"wait_ack_insufficient","event_type":"backend_health","primary_healthy":true,"replica_healthy":true,"replication_link":"up","aof":false,"appendfsync":"not_enabled"}

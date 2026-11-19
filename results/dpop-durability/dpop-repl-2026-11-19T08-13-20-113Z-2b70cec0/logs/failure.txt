@@ -1,0 +1,3 @@
+2026-11-19T08:13:43.686Z Error: timed out waiting for replica detach
+    at waitInfo (file:///home/nasyikhqusyairy/Projects/repositories/mse/research/dpop-durability/scripts/run-replicated-experiment.js:25:169)
+    at async file:///home/nasyikhqusyairy/Projects/repositories/mse/research/dpop-durability/scripts/run-replicated-experiment.js:66:9

@@ -1,0 +1,37 @@
+{
+  "experiment_id": "dpop-2026-11-19T07-45-02-093Z-2921ab71",
+  "repetitions": 5,
+  "created_utc": "2026-11-19T07:45:02.094Z",
+  "git_commit": "5ab4b4f5cbdbc8e36216075615f941b9748253ef",
+  "software": {
+    "node": "v26.7.0",
+    "redis_image": "redis:7-alpine",
+    "redis_config": "save disabled; AOF disabled",
+    "docker": "29.8.1"
+  },
+  "hardware": {
+    "cpus": 8,
+    "total_memory_bytes": 16055599104,
+    "load_average": [
+      0.34,
+      0.59,
+      0.41
+    ],
+    "host": "nasyikhqusyairy-ASUS-TUF-Gaming-F15-FX506LH-FX506LH",
+    "platform": "Linux 7.0.0-43-generic x64"
+  },
+  "topology": "single host; one dedicated standalone Redis; no replica; no resource-server HTTP process",
+  "scenarios": [
+    "normal memory replay",
+    "process-local state reset",
+    "Redis primary reply then SIGKILL/restart",
+    "Redis same-state cross-instance replay"
+  ],
+  "acknowledgement_definition": "Redis SET NX returns OK to the client on primary; no replication/AOF acknowledgement",
+  "fault_definition": "docker kill --signal KILL on the isolated Redis primary after successful SET reply, then start same container with volatile-only configuration",
+  "limits": [
+    "No Redis replicas, WAIT, WAITAOF, MySQL, network partition, or three-host topology",
+    "Resource-server replica boundaries are represented by separate replay-store instances in one Node process",
+    "Performance is local function/client timing and is not production service throughput"
+  ]
+}

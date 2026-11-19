@@ -1,0 +1,14 @@
+2026-11-19T07:45:45.259Z Error: Command failed: docker run -d --name mse-dpop-896ef589 --memory=256m --cpus=0.50 -p 127.0.0.1:6379 redis:7-alpine redis-server --save  --appendonly no
+docker: invalid hostPort: 127.0.0.1
+
+Run 'docker run --help' for more information
+
+    at genericNodeError (node:internal/errors:999:15)
+    at wrappedFn (node:internal/errors:544:14)
+    at checkExecSyncError (node:child_process:942:11)
+    at execFileSync (node:child_process:978:15)
+    at docker (file:///home/nasyikhqusyairy/Projects/repositories/mse/research/dpop-durability/scripts/run-experiment.js:21:35)
+    at file:///home/nasyikhqusyairy/Projects/repositories/mse/research/dpop-durability/scripts/run-experiment.js:43:3
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
