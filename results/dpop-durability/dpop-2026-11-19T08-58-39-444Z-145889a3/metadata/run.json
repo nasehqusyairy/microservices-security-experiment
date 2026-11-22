@@ -1,0 +1,50 @@
+{
+  "experiment_id": "dpop-2026-11-19T08-58-39-444Z-145889a3",
+  "repetitions": 5,
+  "created_utc": "2026-11-19T08:58:39.445Z",
+  "git_commit": "ad695868df79d1bef77d0a06b9348e37704d0416",
+  "software": {
+    "node": "v24.15.0",
+    "redis_image": "redis@sha256:7b1753b4c5ad8458906c272a8132b8c15f5557b000379eb115fb239706a384b7",
+    "redis_version": "7.4.12",
+    "redis_config": "save disabled; AOF disabled",
+    "docker": "29.8.1"
+  },
+  "hardware": {
+    "cpus": 8,
+    "total_memory_bytes": 16055599104,
+    "load_average": [
+      0.35,
+      0.76,
+      0.8
+    ],
+    "host": "nasyikhqusyairy-ASUS-TUF-Gaming-F15-FX506LH-FX506LH",
+    "platform": "Linux 7.0.0-43-generic x64"
+  },
+  "topology": "single host; one dedicated standalone Redis; no replica; no resource-server HTTP process",
+  "scenarios": [
+    "memory_normal",
+    "memory_process_restart",
+    "redis_normal_cross_instance",
+    "redis_primary_sigkill"
+  ],
+  "acknowledgement_definition": "Redis SET NX returns OK to the client on primary; no replication/AOF acknowledgement",
+  "fault_definition": "docker kill --signal KILL on the isolated Redis primary after successful SET reply, then start same container with volatile-only configuration",
+  "limits": [
+    "No Redis replicas, WAIT, WAITAOF, MySQL, network partition, or three-host topology",
+    "Resource-server replica boundaries are represented by separate replay-store instances in one Node process",
+    "Performance is local function/client timing and is not production service throughput"
+  ],
+  "finished_utc": "2026-11-19T08:58:41.064Z",
+  "run_order": [
+    3,
+    2,
+    1,
+    4,
+    5
+  ],
+  "request_count": 40,
+  "event_count": 76,
+  "redis_container": "mse-dpop-e2409924",
+  "redis_port": 32908
+}

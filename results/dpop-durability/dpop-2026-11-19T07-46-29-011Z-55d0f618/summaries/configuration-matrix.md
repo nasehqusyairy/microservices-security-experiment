@@ -1,10 +1,10 @@
 | Scenario | Backend | Durability | Replicas | Fault | Repetitions | RQ |
 |---|---|---|---:|---|---:|---|
-| memory_normal | process-local memory | volatile process state | 1 | none; same-instance replay | 10 | RQ1, RQ3 |
-| memory_process_restart | process-local memory | volatile process state | 1 | reset memory store; replay original proof | 10 | RQ1, RQ2 |
-| redis_normal_cross_instance | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; RDB/AOF off | 1 | logical cross-instance replay; no Redis fault | 10 | RQ1, RQ3 |
-| redis_primary_sigkill | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; RDB/AOF off | 1 | SIGKILL; restart volatile primary; replay | 10 | RQ1, RQ2, RQ3 |
-| primary_only_detached | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; no persistence | 2 | REPLICAOF NO ONE before write; SIGKILL; manual promotion | 5 | RQ1, RQ2 |
-| wait_replica_acked | Redis 7.4.12 | SET NX; WAIT 1 1500ms; AOF off | 2 | WAIT replica ack; SIGKILL; manual promotion | 5 | RQ1, RQ2, RQ3 |
-| wait_ack_insufficient | Redis 7.4.12 | SET NX; WAIT 1 250ms; AOF off | 2 | detach replica; insufficient ack fail closed; SIGKILL; promote | 5 | RQ1, RQ2, RQ3 |
-| waitaof_local_replica_acked | Redis 7.4.12 | AOF on; appendfsync always; WAITAOF 1 1 2000ms | 2 | local+replica AOF ack; SIGKILL; manual promotion | 5 | RQ1, RQ2, RQ3 |
+| memory_normal | process-local memory | volatile process state | 1 | none; same-instance replay | 15 | RQ1, RQ3 |
+| memory_process_restart | process-local memory | volatile process state | 1 | reset memory store; replay original proof | 15 | RQ1, RQ2 |
+| redis_normal_cross_instance | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; RDB/AOF off | 1 | logical cross-instance replay; no Redis fault | 15 | RQ1, RQ3 |
+| redis_primary_sigkill | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; RDB/AOF off | 1 | SIGKILL; restart volatile primary; replay | 15 | RQ1, RQ2, RQ3 |
+| primary_only_detached | Redis 7.4.12 | SET NX; 360s TTL; primary reply only; no persistence | 2 | REPLICAOF NO ONE before write; SIGKILL; manual promotion | 10 | RQ1, RQ2 |
+| wait_replica_acked | Redis 7.4.12 | SET NX; WAIT 1 1500ms; AOF off | 2 | WAIT replica ack; SIGKILL; manual promotion | 10 | RQ1, RQ2, RQ3 |
+| wait_ack_insufficient | Redis 7.4.12 | SET NX; WAIT 1 250ms; AOF off | 2 | detach replica; insufficient ack fail closed; SIGKILL; promote | 10 | RQ1, RQ2, RQ3 |
+| waitaof_local_replica_acked | Redis 7.4.12 | AOF on; appendfsync always; WAITAOF 1 1 2000ms | 2 | local+replica AOF ack; SIGKILL; manual promotion | 10 | RQ1, RQ2, RQ3 |

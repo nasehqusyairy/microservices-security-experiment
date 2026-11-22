@@ -43,7 +43,7 @@ export class MemoryReplayStore {
 }
 
 export class RedisReplayStore {
-  constructor(client, { prefix = 'mse:dpop', ttlSeconds = 360 } = {}) { this.client = client; this.prefix = prefix; this.ttlSeconds = ttlSeconds; this.client.on('error', () => {}); }
+  constructor(client, { prefix = 'mse:dpop', ttlSeconds = 360 } = {}) { this.client = client; this.prefix = prefix; this.ttlSeconds = ttlSeconds; this.client.on('error', () => { }); }
   async consume(id) {
     try {
       const digest = createHash('sha256').update(id).digest('hex');
@@ -113,23 +113,23 @@ export async function validateRequest({ proof, authorization, method, url, store
 }
 
 export async function validateTokenEndpointProof({ proof, method, url, store, nowSeconds = Math.floor(Date.now() / 1000), maxAgeSeconds = 300 }) {
-  const fail=(reason)=>({ok:false,reason});
-  if(typeof proof!=='string'||!proof)return fail('missing_proof');
-  let header,claims;
-  try{
-    header=decodeProtectedHeader(proof);
-    if(header.typ!=='dpop+jwt'||header.alg!=='ES256'||!header.jwk||Object.keys(header.jwk).some(k=>privateFields.has(k)))return fail('invalid_proof_header');
-    const key=await importJWK(header.jwk,'ES256');
-    const verified=await compactVerify(proof,key,{algorithms:['ES256']});
-    claims=JSON.parse(Buffer.from(verified.payload).toString('utf8'));
-  }catch{return fail('invalid_proof_signature');}
-  if(!claims.jti||typeof claims.jti!=='string'||claims.jti.length>256)return fail('invalid_jti');
-  if(claims.htm!==method.toUpperCase())return fail('wrong_method');
-  if(typeof claims.htu!=='string'||claims.htu!==canonicalHtu(url))return fail('wrong_uri');
-  if(!Number.isInteger(claims.iat)||claims.iat>nowSeconds+30||nowSeconds-claims.iat>maxAgeSeconds)return fail('invalid_iat');
-  if(Object.hasOwn(claims,'ath'))return fail('unexpected_ath');
-  const consumed=await store.consume(claims.jti);
-  if(consumed.outcome==='REPLAY')return {ok:false,reason:'replay'};
-  if(consumed.outcome!=='FIRST_USE')return {ok:false,reason:consumed.outcome==='ACKNOWLEDGEMENT_INSUFFICIENT'||consumed.outcome==='TIMEOUT'?consumed.outcome.toLowerCase():'store_error'};
-  return {ok:true,jkt:await calculateJwkThumbprint(header.jwk),claims};
+  const fail = (reason) => ({ ok: false, reason });
+  if (typeof proof !== 'string' || !proof) return fail('missing_proof');
+  let header, claims;
+  try {
+    header = decodeProtectedHeader(proof);
+    if (header.typ !== 'dpop+jwt' || header.alg !== 'ES256' || !header.jwk || Object.keys(header.jwk).some(k => privateFields.has(k))) return fail('invalid_proof_header');
+    const key = await importJWK(header.jwk, 'ES256');
+    const verified = await compactVerify(proof, key, { algorithms: ['ES256'] });
+    claims = JSON.parse(Buffer.from(verified.payload).toString('utf8'));
+  } catch { return fail('invalid_proof_signature'); }
+  if (!claims.jti || typeof claims.jti !== 'string' || claims.jti.length > 256) return fail('invalid_jti');
+  if (claims.htm !== method.toUpperCase()) return fail('wrong_method');
+  if (typeof claims.htu !== 'string' || claims.htu !== canonicalHtu(url)) return fail('wrong_uri');
+  if (!Number.isInteger(claims.iat) || claims.iat > nowSeconds + 30 || nowSeconds - claims.iat > maxAgeSeconds) return fail('invalid_iat');
+  if (Object.hasOwn(claims, 'ath')) return fail('unexpected_ath');
+  const consumed = await store.consume(claims.jti);
+  if (consumed.outcome === 'REPLAY') return { ok: false, reason: 'replay' };
+  if (consumed.outcome !== 'FIRST_USE') return { ok: false, reason: consumed.outcome === 'ACKNOWLEDGEMENT_INSUFFICIENT' || consumed.outcome === 'TIMEOUT' ? consumed.outcome.toLowerCase() : 'store_error' };
+  return { ok: true, jkt: await calculateJwkThumbprint(header.jwk), claims };
 }

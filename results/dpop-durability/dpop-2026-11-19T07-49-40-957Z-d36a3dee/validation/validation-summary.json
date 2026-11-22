@@ -1,5 +1,5 @@
 {
-  "valid_experiment_runs": 3,
+  "valid_experiment_runs": 5,
   "invalid_or_partial_runs": 11,
   "runs": [
     {
@@ -29,6 +29,11 @@
     },
     {
       "experiment_id": "dpop-2026-11-19T07-49-40-957Z-d36a3dee",
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "experiment_id": "dpop-2026-11-19T08-58-39-444Z-145889a3",
       "valid": true,
       "reason": ""
     },
@@ -69,6 +74,11 @@
     },
     {
       "experiment_id": "dpop-repl-2026-11-19T08-16-16-028Z-a10c2e92",
+      "valid": true,
+      "reason": ""
+    },
+    {
+      "experiment_id": "dpop-repl-2026-11-19T08-58-50-986Z-06ce64bd",
       "valid": true,
       "reason": ""
     }

@@ -5,6 +5,7 @@ dpop-2026-11-19T07-45-45-224Z-351b6c7c,False,incomplete/failed pilot: no complet
 dpop-2026-11-19T07-45-53-938Z-b0c24002,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T07:46:04.445Z Error: isolated Redis did not become healthy
 dpop-2026-11-19T07-46-29-011Z-55d0f618,True,
 dpop-2026-11-19T07-49-40-957Z-d36a3dee,True,
+dpop-2026-11-19T08-58-39-444Z-145889a3,True,
 dpop-repl-2026-11-19T08-01-11-999Z-8df4f252,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset
 dpop-repl-2026-11-19T08-01-41-648Z-b0f5f475,False,one-repetition replicated-topology pilot excluded by predeclared inclusion policy
 dpop-repl-2026-11-19T08-03-05-644Z-a8b2f011,False,"Invalid fault ordering: replica was promoted before primary SIGKILL. Retained intact for audit, excluded from all main estimates."
@@ -13,3 +14,4 @@ dpop-repl-2026-11-19T08-13-20-113Z-2b70cec0,False,incomplete/failed pilot: no co
 dpop-repl-2026-11-19T08-14-02-717Z-c45611c8,False,incomplete/failed pilot: no complete run metadata and normalized raw dataset; 2026-11-19T08:14:25.115Z Error: Redis not healthy on mapped port 32841
 dpop-repl-2026-11-19T08-14-59-904Z-e3af2e9c,False,one-repetition replicated-topology pilot excluded by predeclared inclusion policy
 dpop-repl-2026-11-19T08-16-16-028Z-a10c2e92,True,
+dpop-repl-2026-11-19T08-58-50-986Z-06ce64bd,True,
